@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "koffient-tooling"
+version = "0.1.0"
+description = "Koffient model tooling: on-device benchmarks and model passports"
+requires-python = ">=3.11"
+dependencies = ["gguf==0.19.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+koffient = "koffient_tooling.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["koffient_tooling*"]
+
+[tool.setuptools.package-data]
+koffient_tooling = ["prompts/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

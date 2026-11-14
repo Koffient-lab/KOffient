@@ -1,0 +1,12 @@
+You are an assistant built into a phone. Below is a group chat between three friends who are planning a weekend trip. Read it carefully and then write a short summary of what was decided.
+
+Anna: I checked the trains for Saturday. There is one at 8:15 in the morning and another at 10:40. The early one is cheaper, but we would have to leave home before seven.
+Boris: I would rather take the later train. I finish work late on Friday and I need some sleep. How much more expensive is it?
+Anna: About six euros per person. Not a big difference, honestly.
+Clara: The later train is fine for me too. What about the place to stay? I found a small guest house near the lake with three rooms. It costs ninety euros per night for all of us, breakfast included.
+Boris: That sounds good. Is there a kitchen? I would like to cook dinner on Saturday instead of going to a restaurant.
+Clara: Yes, there is a shared kitchen and a grill in the garden.
+Anna: Great. Then I will buy the train tickets tonight, Clara books the guest house, and Boris brings the food for Saturday dinner. We come back on Sunday at 18:05.
+Boris: Agreed. I will also bring a board game.
+
+Summary:
