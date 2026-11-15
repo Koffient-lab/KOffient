@@ -170,6 +170,16 @@ def cmd_show(args) -> int:
     return 0
 
 
+def cmd_report(args) -> int:
+    from . import report  # imported here: matplotlib is an optional dependency
+
+    results_dir = _results_dir(args)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    out_dir = Path(args.out) if args.out else results_dir / "reports" / f"{stamp}-{rec.slug(args.name)}"
+    print(f"report written to {report.build(results_dir, out_dir, args.base)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="koffient", description="Koffient model tooling")
     groups = parser.add_subparsers(dest="group", required=True)
@@ -198,6 +208,13 @@ def main(argv: list[str] | None = None) -> int:
     show = bench.add_parser("show", help="print recorded runs as a table")
     common(show)
     show.set_defaults(func=cmd_show)
+
+    rep = bench.add_parser("report", help="build charts and tables from the recorded runs")
+    common(rep)
+    rep.add_argument("--name", default="report", help="report name, used in the folder name")
+    rep.add_argument("--out", help="output folder (default: <results-dir>/reports/<date>-<name>)")
+    rep.add_argument("--base", help="part of the base variant's label (default: the largest model)")
+    rep.set_defaults(func=cmd_report)
 
     from .quality import cli as quality_cli  # imported here: bench commands must work without its dependencies
 
