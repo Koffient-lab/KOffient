@@ -1,4 +1,4 @@
-"""Command line entry point: `python -m koffient_tooling bench run|show`."""
+"""Command line entry point: `python -m koffient_tooling bench run|show`, `... quality run|closeness|show`."""
 
 from __future__ import annotations
 
@@ -198,6 +198,10 @@ def main(argv: list[str] | None = None) -> int:
     show = bench.add_parser("show", help="print recorded runs as a table")
     common(show)
     show.set_defaults(func=cmd_show)
+
+    from .quality import cli as quality_cli  # imported here: bench commands must work without its dependencies
+
+    quality_cli.register(groups, common)
 
     args = parser.parse_args(argv)
     return args.func(args)

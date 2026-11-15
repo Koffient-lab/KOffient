@@ -5,12 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "koffient-tooling"
 version = "0.1.0"
-description = "Koffient model tooling: on-device benchmarks and model passports"
+description = "Koffient model tooling: on-device benchmarks, quality evaluation and model passports"
 requires-python = ">=3.11"
-dependencies = ["gguf==0.19.0"]
+dependencies = ["gguf==0.19.0", "requests>=2.31"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Quality evaluation. The IFEval checker is installed separately from its repository, see README.
+quality = ["pyarrow>=15", "jsonschema>=4.20", "rouge-score>=0.1.2"]
+report = ["matplotlib>=3.8"]
 
 [project.scripts]
 koffient = "koffient_tooling.cli:main"
