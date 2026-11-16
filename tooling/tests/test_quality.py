@@ -1,5 +1,6 @@
 """Quality evaluation: answer parsing, scoring helpers, subsampling and records. No model or server needed."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -138,6 +139,53 @@ def test_perplexity_output_parsing():
     assert kld["delta_p_mean_pct"] == -0.804 and kld["same_top_pct"] == 88.598
     with pytest.raises(closeness.ClosenessError):
         closeness.parse_kld("error: failed to load model")
+
+
+def test_side_group_is_reported_but_left_out_of_the_headline():
+    task = tasks.TASKS["bfcl-en"]
+    answers = {"a": {"score": 1.0, "stratum": "simple"}, "b": {"score": 0.0, "stratum": "parallel"},
+               "c": {"score": 1.0, "stratum": "irrelevance"}, "d": {"score": 1.0, "stratum": "irrelevance"}}
+    headline, groups = run.split_answers(task, answers)
+    assert sorted(headline) == ["a", "b"] and sorted(groups) == ["irrelevance", "parallel", "simple"]
+    assert run.score_block(list(headline.values()))["value"] == 0.5
+    assert run.split_answers(tasks.TASKS["mgsm-en"], answers) == (answers, {})
+
+
+def test_task_near_a_blind_guess_does_not_separate_variants():
+    assert not run.separates_variants(tasks.TASKS["mgsm-ru"], 0.048)
+    assert run.separates_variants(tasks.TASKS["mgsm-en"], 0.46)
+    assert not run.separates_variants(tasks.TASKS["mmlu-ru"], 0.326)  # four options: a guess scores 0.25
+    assert run.separates_variants(tasks.TASKS["mmlu-en"], 0.397)
+    assert run.separates_variants(tasks.TASKS["samsum-ru"], 0.05)  # ROUGE has no guessing level
+
+
+def test_comparison_uses_headline_groups_and_flat_mark(tmp_path):
+    from koffient_tooling.quality.cli import comparison
+
+    def write(eval_id: str, sha: str, size: int, name: str, rows: list[tuple[str, str, float]]):
+        raw = tmp_path / "raw" / eval_id
+        raw.mkdir(parents=True)
+        (raw / run.ANSWERS_FILE).write_text("".join(
+            json.dumps({"pair_key": key, "stratum": stratum, "score": score}) + "\n"
+            for key, stratum, score in rows), encoding="utf-8")
+        scores = [score for _, _, score in rows]
+        rec.append(make_record(
+            eval_id=eval_id, raw_dir=f"raw/{eval_id}",
+            model={"sha256": sha, "file": f"{eval_id}.gguf", "file_bytes": size},
+            task={"name": name, "role": "primary", "scenario": "x", "lang": "en"},
+            metrics={"value": sum(scores) / len(scores), "ci95": [0.0, 1.0], "n": len(rows), "n_truncated": 3}),
+            tmp_path)
+
+    write("big-bfcl", "a" * 64, 200, "bfcl-en", [("1", "simple", 1.0), ("2", "simple", 1.0), ("3", "irrelevance", 0.0)])
+    write("small-bfcl", "b" * 64, 100, "bfcl-en", [("1", "simple", 0.0), ("2", "simple", 1.0), ("3", "irrelevance", 1.0)])
+    write("big-math", "a" * 64, 200, "mgsm-ru", [("1", "", 0.0), ("2", "", 0.0)])
+    data = comparison(rec.load(tmp_path), tmp_path, None)
+    small = data["tasks"]["bfcl-en"]["b" * 64 + "|"]
+    assert data["base"]["model"]["sha256"] == "a" * 64 and data["flat"] == ["mgsm-ru"]
+    assert small["value"] == 0.5 and small["n"] == 2 and small["truncated"] == 3
+    assert small["changed"] == {"n": 2, "worse": 1, "better": 0, "share": 0.5}
+    assert list(small["groups"]) == ["simple", "irrelevance"] and small["groups"]["irrelevance"]["side"]
+    assert small["groups"]["irrelevance"]["changed"]["better"] == 1
 
 
 # --- records ----------------------------------------------------------------------------------------------------

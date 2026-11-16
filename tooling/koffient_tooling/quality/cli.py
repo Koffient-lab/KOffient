@@ -10,7 +10,8 @@ from pathlib import Path
 from .. import record as runs
 from ..model import describe_model, sha256_file
 from . import closeness, record as rec
-from .run import changed_answers, load_answers, run_task
+from .run import (MIN_HEADROOM, changed_answers, load_answers, run_task, score_block, separates_variants,
+                  split_answers)
 from .scorers import ScoringError, make_scorer
 from .server import ServerError, ServerPool, describe_host_engine
 from .tasks import TASKS, Dirs, subset_sha256
@@ -194,28 +195,54 @@ def comparison(records: list[dict], results: Path, base_hint: str | None) -> dic
         variants[rec.variant_key(record)] = {"key": rec.variant_key(record), "model": record["model"],
                                              "label": record.get("label")}
     if not variants:
-        return {"variants": [], "base": None, "tasks": {}, "closeness": {}}
+        return {"variants": [], "base": None, "tasks": {}, "flat": [], "closeness": {}}
     order = sorted(variants.values(), key=lambda v: (-v["model"]["file_bytes"], v["label"] or ""))
     hinted = [v for v in order if base_hint and base_hint.lower() in _label(v).lower()]
     base = (hinted or order)[0]
 
+    loaded: dict[str, dict | None] = {}
+
+    def answers(record: dict | None) -> dict | None:
+        if record is None:
+            return None
+        if record["eval_id"] not in loaded:
+            try:
+                loaded[record["eval_id"]] = load_answers(results / record["raw_dir"])
+            except OSError:
+                loaded[record["eval_id"]] = None
+        return loaded[record["eval_id"]]
+
     cells: dict[str, dict[str, dict]] = {}
     for (key, name), record in tasks.items():
-        cell = {"value": record["metrics"]["value"], "ci95": record["metrics"]["ci95"], "n": record["metrics"]["n"],
-                "truncated": record["metrics"]["n_truncated"], "role": record["task"]["role"],
-                "scenario": record["task"]["scenario"], "lang": record["task"]["lang"], "changed": None}
-        base_record = tasks.get((base["key"], name))
-        if base_record and key != base["key"]:
-            try:
-                cell["changed"] = changed_answers(load_answers(results / base_record["raw_dir"]),
-                                                  load_answers(results / record["raw_dir"]))
-            except OSError:
-                pass
+        metrics, task = record["metrics"], TASKS.get(name)
+        cell = {"value": metrics["value"], "ci95": metrics["ci95"], "n": metrics["n"],
+                "truncated": metrics.get("n_truncated"), "role": record["task"]["role"],
+                "scenario": record["task"]["scenario"], "lang": record["task"]["lang"], "changed": None,
+                "groups": {}}
+        own = answers(record)
+        base_answers = answers(tasks.get((base["key"], name))) if key != base["key"] else None
+        base_groups: dict[str, dict[str, dict]] = {}
+        if own is not None and task is not None:
+            headline, groups = split_answers(task, own)
+            if groups:  # the headline score leaves the side groups out
+                cell.update(score_block(list(headline.values())))
+            if base_answers is not None:
+                base_headline, base_groups = split_answers(task, base_answers)
+                cell["changed"] = changed_answers(base_headline, headline)
+            for group, rows in sorted(groups.items(), key=lambda item: (item[0] in task.side_strata, item[0])):
+                cell["groups"][group] = {
+                    **score_block(list(rows.values())), "side": group in task.side_strata,
+                    "changed": changed_answers(base_groups.get(group, {}), rows) if base_answers is not None else None}
         cells.setdefault(name, {})[key] = cell
+    flat = []
+    for name, by_variant in cells.items():
+        base_cell = by_variant.get(base["key"])
+        if base_cell and name in TASKS and not separates_variants(TASKS[name], base_cell["value"]):
+            flat.append(name)
     closeness_cells: dict[str, dict[str, dict]] = {}
     for (key, lang), record in close.items():
         closeness_cells.setdefault(lang, {})[key] = record["metrics"]
-    return {"variants": order, "base": base, "tasks": cells, "closeness": closeness_cells}
+    return {"variants": order, "base": base, "tasks": cells, "flat": flat, "closeness": closeness_cells}
 
 
 def cmd_show(args) -> int:
@@ -228,22 +255,36 @@ def cmd_show(args) -> int:
     print(f"base for comparison: {_label(base)}")
     header = ["task", "role"] + [_label(m) for m in models]
     rows = [header]
+
+    def text(cell: dict | None, cut: bool) -> str:
+        if not cell:
+            return "-"
+        out = f"{cell['value']:.3f} [{cell['ci95'][0]:.2f}-{cell['ci95'][1]:.2f}]"
+        if cut and cell.get("truncated"):
+            out += f" cut {cell['truncated']}"
+        if cell["changed"]:
+            c = cell["changed"]
+            out += f" changed {c['share'] * 100:.0f}% (-{c['worse']} +{c['better']})"
+        return out
+
+    notes = []
     for name in TASKS:
         if name not in data["tasks"]:
             continue
         cells = data["tasks"][name]
-        row = [name, next(iter(cells.values()))["role"]]
-        for model in models:
-            cell = cells.get(model["key"])
-            if not cell:
-                row.append("-")
-                continue
-            text = f"{cell['value']:.3f} [{cell['ci95'][0]:.2f}-{cell['ci95'][1]:.2f}]"
-            if cell["changed"]:
-                c = cell["changed"]
-                text += f" changed {c['share'] * 100:.0f}% (-{c['worse']} +{c['better']})"
-            row.append(text)
-        rows.append(row)
+        first = next(iter(cells.values()))
+        role = first["role"] + (" *" if name in data["flat"] else "")
+        rows.append([name, role] + [text(cells.get(model["key"]), cut=True) for model in models])
+        for group in first["groups"]:
+            mark = " (not in the score above)" if first["groups"][group]["side"] else ""
+            rows.append([f"  {group}{mark}", ""] + [
+                text((cells.get(model["key"]) or {"groups": {}})["groups"].get(group), cut=False)
+                for model in models])
+    if data["flat"]:
+        notes.append(f"* the base model is within {MIN_HEADROOM:.2f} of a blind guess: "
+                     f"the task does not separate variants of this model")
+    if any(cell.get("truncated") for cells in data["tasks"].values() for cell in cells.values()):
+        notes.append("cut N: answers stopped by the token limit")
     for lang, cells in sorted(data["closeness"].items()):
         row = [f"closeness-{lang}", "fp16"]
         for model in models:
@@ -258,6 +299,8 @@ def cmd_show(args) -> int:
     widths = [max(len(row[i]) for row in rows) for i in range(len(header))]
     for row in rows:
         print("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip())
+    for note in notes:
+        print(note)
     return 0
 
 

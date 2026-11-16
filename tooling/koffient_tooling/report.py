@@ -14,6 +14,7 @@ from pathlib import Path
 from . import record as runs
 from .quality import record as quality
 from .quality.cli import _label, comparison
+from .quality.run import MIN_HEADROOM
 from .quality.tasks import TASKS
 
 # Palette: validated categorical slots 1-3 and chart chrome for the light surface.
@@ -35,6 +36,11 @@ METRICS = {
     "math": "доля верных ответов", "knowledge": "доля верных ответов",
 }
 LANGS = {"en": "английский", "ru": "русский"}
+GROUPS = {
+    "simple": "Одна функция", "multiple": "Выбор из нескольких функций", "parallel": "Несколько вызовов сразу",
+    "irrelevance": "Вызов не нужен",
+}
+FLAT_NOTE = "не различает варианты этой модели"
 
 
 def _pyplot():
@@ -79,6 +85,7 @@ def chart_quality_vs_size(data: dict, path: Path) -> list[dict]:
         ax.set_visible(False)
     for ax, scenario in zip(axes.flat, scenarios):
         top = 0.0
+        flat_langs: list[str] = []
         names = [t for t in data["tasks"] if TASKS[t].scenario == scenario]
         for name in sorted(names, key=lambda t: list(LANGS).index(TASKS[t].lang)):
             task = TASKS[name]
@@ -96,13 +103,21 @@ def chart_quality_vs_size(data: dict, path: Path) -> list[dict]:
                         markeredgecolor=SURFACE, markeredgewidth=2, elinewidth=1, capsize=3, label=label,
                         solid_capstyle="round", solid_joinstyle="round")
             top = max([top] + [cell["ci95"][1] for _, cell in points])
+            flat = name in data["flat"]
+            if flat and points:
+                flat_langs.append(LANGS[task.lang])
             for v, cell in points:
                 table.append({"task": name, "scenario": scenario, "lang": task.lang, "variant": _label(v),
                               "file_mb": round(v["model"]["file_bytes"] / 1e6), "value": cell["value"],
-                              "ci95": cell["ci95"], "n": cell["n"]})
+                              "ci95": cell["ci95"], "n": cell["n"], "truncated": cell["truncated"],
+                              "note": FLAT_NOTE if flat else ""})
         role = ROLES[TASKS[names[0]].role]
         ax.set_title(f"{SCENARIOS[scenario]} ({role})")
         ax.set_ylabel(METRICS[scenario])
+        if flat_langs:
+            # Under the axis, not next to the line: inside the panel the note collides with the other language.
+            who = f"{', '.join(flat_langs)}: " if len(names) > 1 else ""
+            ax.set_xlabel(f"{who}{FLAT_NOTE}", color=MUTED, fontsize=9)
         ax.set_ylim(0, min(1.0, top * 1.15) if top else 1.0)
         _variant_ticks(ax, variants)
     handles, labels = axes.flat[0].get_legend_handles_labels()
@@ -110,9 +125,53 @@ def chart_quality_vs_size(data: dict, path: Path) -> list[dict]:
         fig.legend(handles, labels, loc="upper right", ncols=2, bbox_to_anchor=(0.99, 0.995))
     name = variants[0]["model"]["name"]
     fig.suptitle(f"Качество против размера файла: {name}", x=0.01, ha="left", fontsize=13, fontweight="bold")
-    fig.text(0.01, 0.005, "Отрезки — 95% доверительный интервал. Подвыборки быстрого набора.", color=MUTED,
-             fontsize=9)
+    fig.text(0.01, 0.005, "Отрезки — 95% доверительный интервал. Подвыборки быстрого набора. "
+                          "Вызов функций — без группы «вызов не нужен».", color=MUTED, fontsize=9)
     fig.tight_layout(rect=(0, 0.02, 1, 0.96))
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    return table
+
+
+def chart_call_groups(data: dict, path: Path) -> list[dict]:
+    """Function calling by group of examples: one panel per group, one line per language."""
+    plt = _pyplot()
+    variants = sorted((v for v in data["variants"] if not v["label"]), key=lambda v: v["model"]["file_bytes"])
+    position = {v["key"]: i for i, v in enumerate(variants)}
+    names = [t for t in TASKS if any(cell["groups"] for cell in data["tasks"].get(t, {}).values())]
+    groups = [g for g in GROUPS if any(g in cell["groups"] for t in names for cell in data["tasks"][t].values())]
+    if not variants or not groups:
+        return []
+    fig, axes = plt.subplots(1, len(groups), figsize=(3.6 * len(groups), 3.7), squeeze=False, sharey=True)
+    table = []
+    for ax, group in zip(axes.flat, groups):
+        for name in sorted(names, key=lambda t: list(LANGS).index(TASKS[t].lang)):
+            lang = TASKS[name].lang
+            points = [(v, (data["tasks"][name].get(v["key"]) or {"groups": {}})["groups"].get(group))
+                      for v in variants]
+            points = [(v, cell) for v, cell in points if cell]
+            shift = (list(LANGS).index(lang) - 0.5) * 0.08 if len(names) > 1 else 0.0
+            ax.errorbar([position[v["key"]] + shift for v, _ in points], [cell["value"] for _, cell in points],
+                        yerr=[[cell["value"] - cell["ci95"][0] for _, cell in points],
+                              [cell["ci95"][1] - cell["value"] for _, cell in points]],
+                        color=SERIES[list(LANGS).index(lang)], linewidth=2, marker="o", markersize=8,
+                        markeredgecolor=SURFACE, markeredgewidth=2, elinewidth=1, capsize=3, label=LANGS[lang],
+                        solid_capstyle="round", solid_joinstyle="round")
+            for v, cell in points:
+                table.append({"task": name, "group": group, "variant": _label(v), "value": cell["value"],
+                              "ci95": cell["ci95"], "n": cell["n"],
+                              "in_score": "нет" if cell["side"] else "да"})
+        ax.set_title(GROUPS[group])
+        ax.set_ylim(0, 1)
+        _variant_ticks(ax, variants)
+    axes.flat[0].set_ylabel("доля верных ответов")
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper right", ncols=2, bbox_to_anchor=(0.99, 0.995))
+    fig.suptitle(f"Вызов функций по группам примеров: {variants[0]['model']['name']}", x=0.01, ha="left",
+                 fontsize=13, fontweight="bold")
+    fig.text(0.01, 0.005, "Отрезки — 95% доверительный интервал. В группе «вызов не нужен» верный ответ — "
+                          "не вызывать функцию; в общую оценку она не входит.", color=MUTED, fontsize=9)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.93))
     fig.savefig(path, dpi=160)
     plt.close(fig)
     return table
@@ -254,6 +313,7 @@ def build(results_dir: Path, out_dir: Path, base_hint: str | None = None) -> Pat
     data = comparison(quality_records, results_dir, base_hint)
     tables = {
         "quality_vs_size": chart_quality_vs_size(data, out_dir / "quality_vs_size.png") if data["variants"] else [],
+        "call_groups": chart_call_groups(data, out_dir / "function_calls_by_group.png") if data["variants"] else [],
         "closeness": chart_closeness(data, out_dir / "closeness.png") if data["variants"] else [],
         "changed_answers": chart_changed_answers(data, out_dir / "changed_answers.png") if data["variants"] else [],
         "speed": chart_speed(run_records, out_dir / "speed.png"),
@@ -273,7 +333,13 @@ def build(results_dir: Path, out_dir: Path, base_hint: str | None = None) -> Pat
         f"Построен из `runs.jsonl` и `quality.jsonl`, код `{sources['tooling_commit']}`. "
         f"Модель для сравнения: {sources['base'] or 'нет'}. Идентификаторы записей — в `data.json`.\n",
         "## Качество против размера\n\n![](quality_vs_size.png)\n",
-        _md_table(tables["quality_vs_size"], ["task", "variant", "file_mb", "value", "ci95", "n"]),
+        "`truncated` — сколько ответов оборвано по лимиту токенов. Оценка `bfcl` — без группы «вызов не нужен». "
+        f"Пометка «{FLAT_NOTE}» стоит там, где модель для сравнения выше уровня угадывания меньше чем на "
+        f"{MIN_HEADROOM:.2f}: порог «не хуже fp16» к такой задаче не применяется.\n",
+        _md_table(tables["quality_vs_size"], ["task", "variant", "file_mb", "value", "ci95", "n", "truncated",
+                                              "note"]),
+        "## Вызов функций по группам примеров\n\n![](function_calls_by_group.png)\n",
+        _md_table(tables["call_groups"], ["task", "group", "variant", "value", "ci95", "n", "in_score"]),
         "## Близость к fp16\n\n![](closeness.png)\n",
         _md_table(tables["closeness"], ["lang", "variant", "ppl", "kld_mean", "same_top_pct"]),
         "## Изменившиеся ответы\n\n![](changed_answers.png)\n",

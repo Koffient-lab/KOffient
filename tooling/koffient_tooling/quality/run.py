@@ -81,6 +81,32 @@ def load_answers(raw_dir: Path) -> dict[str, dict]:
     return {row["pair_key"]: row for row in rows}
 
 
+# A task separates variants of a model only if the base variant stands at least this far above a blind guess:
+# with 200-300 examples the interval is about +-0.05 wide, so a smaller gap is lost in it even after a full collapse.
+MIN_HEADROOM = 0.10
+
+
+def score_block(rows: list[dict]) -> dict:
+    scores = [row["score"] for row in rows]
+    return {"value": round(sum(scores) / len(scores), 4) if scores else None,
+            "ci95": confidence_interval(scores), "n": len(rows)}
+
+
+def split_answers(task: Task, answers: dict[str, dict]) -> tuple[dict[str, dict], dict[str, dict[str, dict]]]:
+    """Answers that make up the headline score, and all answers by group for a task that has side groups."""
+    if not task.side_strata:
+        return answers, {}
+    groups: dict[str, dict[str, dict]] = {}
+    for key, row in answers.items():
+        groups.setdefault(row["stratum"], {})[key] = row
+    headline = {key: row for key, row in answers.items() if row["stratum"] not in task.side_strata}
+    return headline, groups
+
+
+def separates_variants(task: Task, base_value: float) -> bool:
+    return task.chance is None or base_value - task.chance >= MIN_HEADROOM
+
+
 def changed_answers(base: dict[str, dict], other: dict[str, dict]) -> dict | None:
     """Share of examples whose verdict differs between two models (only meaningful for 0/1 scores)."""
     keys = sorted(set(base) & set(other))

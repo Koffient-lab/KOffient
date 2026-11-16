@@ -46,6 +46,9 @@ class Task:
     max_tokens: int
     load: Callable[[Dirs], list[Example]] = field(repr=False)
     grammar: str | None = None  # GBNF grammar that constrains the answer, if any
+    chance: float | None = 0.0  # score of a blind guess; None when the metric has no such level
+    # Groups of examples reported next to the headline score, not inside it.
+    side_strata: tuple[str, ...] = ()
 
 
 def _rank(pair_key: str) -> str:
@@ -283,9 +286,9 @@ IFEVAL = ("kaleinaNyan/instruction-following-eval", "843295a")
 
 TASKS: dict[str, Task] = {t.name: t for t in [
     Task("bfcl-en", "function_calling", "primary", "en", f"{RFCB[0]} (BFCL v3)", RFCB[1], "Apache-2.0",
-         "ast_accuracy", 256, _load_bfcl("BFCL_v3_")),
+         "ast_accuracy", 256, _load_bfcl("BFCL_v3_"), side_strata=("irrelevance",)),
     Task("bfcl-ru", "function_calling", "primary", "ru", f"{RFCB[0]} (BFCL v3 RU)", RFCB[1], "none stated",
-         "ast_accuracy", 256, _load_bfcl("BFCL_v3_RU_")),
+         "ast_accuracy", 256, _load_bfcl("BFCL_v3_RU_"), side_strata=("irrelevance",)),
     Task("jsonschema", "json_schema", "primary", "en", "epfl-dlab/JSONSchemaBench", "5bd0f46", "MIT",
          "schema_valid", 512, _load_jsonschema),
     Task("ifeval-en", "instructions", "primary", "en", IFEVAL[0], IFEVAL[1], "Apache-2.0",
@@ -293,15 +296,15 @@ TASKS: dict[str, Task] = {t.name: t for t in [
     Task("ifeval-ru", "instructions", "primary", "ru", IFEVAL[0], IFEVAL[1], "none stated upstream",
          "strict_prompt_accuracy", 1280, _load_ifeval("ru")),
     Task("samsum-en", "summarization", "secondary", "en", "knkarthick/samsum", "6b929ff", "CC BY-NC-ND 4.0",
-         "rouge_l_f", 192, _load_samsum("en")),
+         "rouge_l_f", 192, _load_samsum("en"), chance=None),
     Task("samsum-ru", "summarization", "secondary", "ru", "d0rj/samsum-ru", "1793e9d", "CC BY-NC-ND 4.0",
-         "rouge_l_f", 192, _load_samsum("ru")),
+         "rouge_l_f", 192, _load_samsum("ru"), chance=None),
     Task("mgsm-en", "math", "control", "en", "juletxara/mgsm", "b2f13d4", "unclear (CC BY-SA 4.0 / MIT)",
          "exact_match", 512, _load_mgsm("en")),
     Task("mgsm-ru", "math", "control", "ru", "juletxara/mgsm", "b2f13d4", "unclear (CC BY-SA 4.0 / MIT)",
          "exact_match", 512, _load_mgsm("ru")),
     Task("mmlu-en", "knowledge", "control", "en", "cais/mmlu", "c30699e", "MIT",
-         "accuracy", 2, _load_mmlu, MMLU_GRAMMAR),
+         "accuracy", 2, _load_mmlu, MMLU_GRAMMAR, chance=0.25),
     Task("mmlu-ru", "knowledge", "control", "ru", "MERA-evaluation/MERA (ruMMLU)", "15c0e5b", "MIT",
-         "accuracy", 2, _load_rummlu, MMLU_GRAMMAR),
+         "accuracy", 2, _load_rummlu, MMLU_GRAMMAR, chance=0.25),
 ]}
