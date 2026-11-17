@@ -81,6 +81,9 @@ class LlamaServer:
         self.command = [
             str(engine_dir / SERVER_BINARY), "-m", str(model), "--host", "127.0.0.1",
             "-c", str(ctx), "-np", "1", "-t", str(threads), "--jinja", "--no-webui",
+            # Every request is computed from scratch (cache_prompt is off), so the host prompt cache (up to 8 GB per
+            # server by default) and context checkpoints (state copies, large for hybrid models) only cost memory.
+            "--cache-ram", "0", "--ctx-checkpoints", "0",
         ]
         if gpu_layers is not None:
             self.command += ["-ngl", gpu_layers]
