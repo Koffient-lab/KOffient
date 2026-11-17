@@ -188,6 +188,14 @@ def test_comparison_uses_headline_groups_and_flat_mark(tmp_path):
     assert small["groups"]["irrelevance"]["changed"]["better"] == 1
 
 
+def test_records_listed_as_invalid_are_left_out(tmp_path):
+    rec.append(make_record(eval_id="kept"), tmp_path)
+    rec.append(make_record(eval_id="broken", metrics={"value": 0.0}), tmp_path)
+    (tmp_path / rec.INVALID_FILE).write_text(json.dumps({"eval_id": "broken", "reason": "degenerate output"}) + "\n",
+                                             encoding="utf-8")
+    assert [r["eval_id"] for r in rec.load(tmp_path)] == ["kept"]
+
+
 def test_latest_skips_runs_with_failed_requests_or_hidden_penalties(tmp_path):
     rec.append(make_record(eval_id="good", metrics={"value": 0.5, "n_request_errors": 0}), tmp_path)
     rec.append(make_record(eval_id="errors", metrics={"value": 0.2, "n_request_errors": 40}), tmp_path)

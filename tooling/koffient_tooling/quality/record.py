@@ -61,12 +61,27 @@ def append(record: dict, results_dir: Path) -> Path:
     return path
 
 
+INVALID_FILE = "invalid.jsonl"  # {"eval_id": ..., "reason": ...} per line: records found wrong after they were written
+
+
+def invalid_ids(results_dir: Path) -> dict[str, str]:
+    path = results_dir / INVALID_FILE
+    if not path.is_file():
+        return {}
+    with open(path, encoding="utf-8") as handle:
+        rows = [json.loads(line) for line in handle if line.strip()]
+    return {row["eval_id"]: row["reason"] for row in rows}
+
+
 def load(results_dir: Path) -> list[dict]:
+    """Records of quality.jsonl, without the ones listed in invalid.jsonl (the file itself is append-only)."""
     path = results_dir / QUALITY_FILE
     if not path.is_file():
         return []
+    invalid = invalid_ids(results_dir)
     with open(path, encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+        records = [json.loads(line) for line in handle if line.strip()]
+    return [r for r in records if r["eval_id"] not in invalid]
 
 
 def variant_key(record: dict) -> str:
