@@ -153,11 +153,21 @@ _NUMBER = re.compile(r"-?\d+(?:[,  ]\d{3})*(?:[.,]\d+)?")
 _ANSWER_MARK = re.compile(r"(?:answer|ответ)\s*[:：]", re.I)
 
 
-def parse_number(token: str) -> float:
+def parse_number(token: str) -> float | None:
     token = token.replace(" ", "").replace(" ", "")
     if re.fullmatch(r"-?\d+(,\d{3})+(\.\d+)?", token):
         token = token.replace(",", "")
-    return float(token.replace(",", "."))
+    try:
+        return float(token.replace(",", "."))
+    except ValueError:
+        pass
+    # Mixed separators such as "8,956,25" (the old rules could not read them): the last separator is the decimal
+    # point, the others group thousands. Only tokens that used to fail reach this line, so earlier scores stand.
+    head, _, tail = token.replace(",", ".").rpartition(".")
+    try:
+        return float(head.replace(".", "") + "." + tail)
+    except ValueError:
+        return None
 
 
 def extract_final_number(text: str) -> float | None:

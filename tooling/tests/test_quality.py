@@ -24,6 +24,8 @@ def example(reference, **kwargs) -> Example:
     ("Итого 1 250 рублей.", 1250),
     ("Ответ: 2,5", 2.5),
     ("Answer: 4\n\nBut 2 + 1 = 3 bolts in total.", 3),  # the mark is not on the last line: take the last number
+    ("Ответ: 8,956,25 рубля", 8956.25),  # mixed separators used to crash the whole task
+    ("Итого: 5,837,5", 5837.5),
     ("no numbers here", None),
     ("", None),
 ])
