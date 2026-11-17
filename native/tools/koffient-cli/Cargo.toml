@@ -1,0 +1,13 @@
+[package]
+name = "koffient-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "koff"
+path = "src/main.rs"
+
+[dependencies]
+koffient-format = { path = "../../crates/koffient-format" }
+koffient-layout = { path = "../../crates/koffient-layout" }

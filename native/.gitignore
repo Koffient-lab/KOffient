@@ -1,0 +1,10 @@
+/target/
+**/target/
+.idea/
+*.iml
+__pycache__/
+*.py[cod]
+.venv/
+*.log
+*.tmp
+*.bak

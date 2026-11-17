@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/koffient-format",
+    "crates/koffient-layout",
+    "tools/koffient-cli",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "Apache-2.0 OR MIT"
