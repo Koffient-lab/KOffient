@@ -111,8 +111,15 @@ class LlamaServer:
         self.__exit__(None, None, None)
         raise ServerError(f"llama-server did not become ready in {self.start_timeout_s} s, see {self.log_path}")
 
-    def is_dead(self) -> bool:
-        return self._proc is not None and self._proc.poll() is not None
+    def is_dead(self, wait_s: float = 15.0) -> bool:
+        """True when the process has exited. A crash resets the connection before the process is gone, so wait."""
+        if self._proc is None:
+            return False
+        try:
+            self._proc.wait(timeout=wait_s)
+        except subprocess.TimeoutExpired:
+            return False
+        return True
 
     def restart(self) -> None:
         self.__exit__(None, None, None)
