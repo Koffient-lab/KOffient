@@ -111,8 +111,11 @@ def cmd_run(args) -> int:
                 record["task"]["subset_sha256"] = subset_sha256(examples)
                 scorer = make_scorer(task, dirs, work / "nltk_data")
                 record["metrics"] = run_task(server, task, examples, scorer, results / record["raw_dir"])
-                if record["metrics"]["n_request_errors"] == len(examples):
-                    raise ServerError("every request failed, see the server log")
+                errors = record["metrics"]["n_request_errors"]
+                if errors:
+                    # A failed request is scored as a wrong answer; the score would be lower for a reason that has
+                    # nothing to do with the model (e.g. a server that ran out of GPU memory).
+                    raise ServerError(f"{errors} of {len(examples)} requests failed, see the server logs")
                 record["status"] = "ok"
             except (ScoringError, ServerError, OSError, KeyError, ValueError) as exc:
                 record["error"] = f"{type(exc).__name__}: {exc}"
@@ -122,6 +125,8 @@ def cmd_run(args) -> int:
             line = (f"{m['value']:.3f} [{m['ci95'][0]:.3f}, {m['ci95'][1]:.3f}] n={m['n']} "
                     f"truncated={m['n_truncated']} errors={m['n_request_errors']} {m['wall_s']:.0f}s"
                     if record["status"] == "ok" else f"FAILED: {record['error']}")
+            if failed and record["status"] != "ok" and "requests failed" in (record["error"] or ""):
+                break  # the pool is broken; the remaining tasks would fail the same way
             print(f"{name:12} {line}", flush=True)
     finally:
         server.__exit__(None, None, None)

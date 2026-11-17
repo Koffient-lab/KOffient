@@ -188,6 +188,16 @@ def test_comparison_uses_headline_groups_and_flat_mark(tmp_path):
     assert small["groups"]["irrelevance"]["changed"]["better"] == 1
 
 
+def test_latest_skips_runs_with_failed_requests_or_hidden_penalties(tmp_path):
+    rec.append(make_record(eval_id="good", metrics={"value": 0.5, "n_request_errors": 0}), tmp_path)
+    rec.append(make_record(eval_id="errors", metrics={"value": 0.2, "n_request_errors": 40}), tmp_path)
+    rec.append(make_record(eval_id="penalty", metrics={"value": 0.3},
+                           model={"sha256": "0" * 64, "file": "m.gguf", "file_bytes": 10, "build": {"recipe": "x"}}),
+               tmp_path)
+    latest = rec.latest_ok(rec.load(tmp_path), "task")
+    assert [r["eval_id"] for r in latest.values()] == ["good"]
+
+
 def test_every_request_switches_penalties_off(monkeypatch):
     from koffient_tooling.quality import server as srv
 

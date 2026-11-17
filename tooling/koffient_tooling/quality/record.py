@@ -80,6 +80,10 @@ def latest_ok(records: list[dict], kind: str) -> dict[tuple[str, str], dict]:
     for record in records:
         if record["kind"] != kind or record["status"] != "ok":
             continue
+        if record["metrics"].get("n_request_errors"):
+            continue  # written before such runs were marked failed: failed requests counted as wrong answers
+        if kind == "task" and (record["model"].get("build") and "repeat_penalty" not in record["params"]):
+            continue  # our own file decoded with the GGUF's own penalties, before 783c698 (journal P35)
         name = record["task"]["name"] if kind == "task" else record["corpus"]["lang"]
         latest[(variant_key(record), name)] = record
     return latest
