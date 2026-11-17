@@ -27,7 +27,7 @@ def _number(pattern: str, text: str) -> float | None:
 def parse_base(text: str) -> dict:
     ppl = _number(r"Final estimate: PPL = ([\d.]+)", text)
     if ppl is None:
-        raise ClosenessError("no perplexity estimate in the llama-perplexity output")
+        raise ClosenessError("no perplexity estimate in the llama-perplexity output (NaN logits?)")
     return {"ppl": ppl, "ppl_err": _number(r"Final estimate: PPL = [\d.]+ \+/- ([\d.]+)", text)}
 
 
@@ -69,10 +69,20 @@ def save_base_logits(engine_dir: Path, model: Path, corpus: Path, logits: Path, 
                      chunks: int = DEFAULT_CHUNKS, threads: int = 16, gpu_layers: str | None = None,
                      timeout_s: int = 3600) -> dict:
     logits.parent.mkdir(parents=True, exist_ok=True)
-    text = _run([str(engine_dir / PERPLEXITY_BINARY), "-m", str(model), "-f", str(corpus), "-c", str(N_CTX),
-                 "--chunks", str(chunks), "-t", str(threads), "--kl-divergence-base", str(logits),
-                 *_gpu(gpu_layers)], log_path, timeout_s)
-    return parse_base(text)
+    # Written under a temporary name and kept only when the run gave a finite perplexity: a half-written or NaN
+    # logits file would otherwise be picked up by every later comparison as if it were a valid base.
+    partial = logits.with_name(logits.name + ".partial")
+    partial.unlink(missing_ok=True)
+    try:
+        text = _run([str(engine_dir / PERPLEXITY_BINARY), "-m", str(model), "-f", str(corpus), "-c", str(N_CTX),
+                     "--chunks", str(chunks), "-t", str(threads), "--kl-divergence-base", str(partial),
+                     *_gpu(gpu_layers)], log_path, timeout_s)
+        metrics = parse_base(text)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    partial.replace(logits)
+    return metrics
 
 
 def compare_with_base(engine_dir: Path, model: Path, logits: Path, log_path: Path, *,

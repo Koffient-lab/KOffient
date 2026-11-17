@@ -188,6 +188,24 @@ def test_comparison_uses_headline_groups_and_flat_mark(tmp_path):
     assert small["groups"]["irrelevance"]["changed"]["better"] == 1
 
 
+def test_failed_base_run_leaves_no_logits_file(tmp_path, monkeypatch):
+    logits = tmp_path / "kld" / "base-en.kld"
+
+    def fake_run(command, log_path, timeout_s, ok):
+        Path(command[command.index("--kl-divergence-base") + 1]).write_bytes(b"half-written")
+        return "Final estimate: PPL = 12.5 +/- 0.3" if ok else "[1]nan,[2]nan,"
+
+    monkeypatch.setattr(closeness, "_run", lambda c, l, t: fake_run(c, l, t, ok=False))
+    with pytest.raises(closeness.ClosenessError):
+        closeness.save_base_logits(tmp_path, tmp_path / "m.gguf", tmp_path / "c.txt", logits, tmp_path / "b.log")
+    assert list((tmp_path / "kld").iterdir()) == []
+
+    monkeypatch.setattr(closeness, "_run", lambda c, l, t: fake_run(c, l, t, ok=True))
+    assert closeness.save_base_logits(tmp_path, tmp_path / "m.gguf", tmp_path / "c.txt", logits,
+                                      tmp_path / "b.log")["ppl"] == 12.5
+    assert [p.name for p in (tmp_path / "kld").iterdir()] == ["base-en.kld"]
+
+
 def test_closeness_is_shown_only_against_the_chosen_base(tmp_path):
     from koffient_tooling.quality.cli import comparison
 
