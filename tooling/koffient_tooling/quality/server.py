@@ -18,6 +18,11 @@ SERVER_BINARY = "llama-server.exe"
 # Models with a thinking mode (Qwen3) answer in their non-thinking mode, the same footing as models without one.
 # Templates that do not use the variable ignore it, so the prompt of other models does not change.
 CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
+# Greedy decoding with every penalty switched off, sent with each request. The converter writes the model's own
+# generation_config (e.g. Qwen2.5: repetition_penalty 1.1) into the GGUF and llama-server uses it as the default,
+# so without this files of the same model could be decoded differently depending on who converted them.
+SAMPLING = {"temperature": 0, "seed": 1, "repeat_penalty": 1.0, "presence_penalty": 0.0, "frequency_penalty": 0.0,
+            "dry_multiplier": 0.0}
 
 
 class ServerError(RuntimeError):
@@ -108,7 +113,7 @@ class LlamaServer:
     def chat(self, messages: list[dict], max_tokens: int, tools: list[dict] | None = None,
              grammar: str | None = None, timeout_s: int = 600) -> dict:
         """One greedy chat completion. Returns text, parsed tool calls, finish reason and token counts."""
-        payload = {"messages": messages, "max_tokens": max_tokens, "temperature": 0, "seed": 1,
+        payload = {"messages": messages, "max_tokens": max_tokens, **SAMPLING,
                    "cache_prompt": False, "stream": False, "chat_template_kwargs": CHAT_TEMPLATE_KWARGS}
         if tools:
             payload["tools"] = tools

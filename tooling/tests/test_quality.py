@@ -188,6 +188,30 @@ def test_comparison_uses_headline_groups_and_flat_mark(tmp_path):
     assert small["groups"]["irrelevance"]["changed"]["better"] == 1
 
 
+def test_every_request_switches_penalties_off(monkeypatch):
+    from koffient_tooling.quality import server as srv
+
+    sent = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}], "usage": {}}
+
+    def fake_post(url, json, timeout):
+        sent.update(json)
+        return Response()
+
+    monkeypatch.setattr(srv.requests, "post", fake_post)
+    server = srv.LlamaServer(Path("."), Path("m.gguf"), Path("log.txt"))
+    server.url = "http://127.0.0.1:1"
+    server.chat([{"role": "user", "content": "hi"}], max_tokens=4)
+    # A GGUF can carry its own sampling defaults (e.g. repeat_penalty 1.1); the request must override them.
+    assert sent["temperature"] == 0 and sent["repeat_penalty"] == 1.0
+    assert sent["presence_penalty"] == sent["frequency_penalty"] == sent["dry_multiplier"] == 0.0
+
+
 def test_failed_base_run_leaves_no_logits_file(tmp_path, monkeypatch):
     logits = tmp_path / "kld" / "base-en.kld"
 

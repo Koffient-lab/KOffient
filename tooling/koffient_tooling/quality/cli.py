@@ -14,7 +14,7 @@ from . import closeness, record as rec
 from .run import (MIN_HEADROOM, changed_answers, load_answers, run_task, score_block, separates_variants,
                   split_answers)
 from .scorers import ScoringError, make_scorer
-from .server import CHAT_TEMPLATE_KWARGS, ServerError, ServerPool, describe_host_engine
+from .server import CHAT_TEMPLATE_KWARGS, SAMPLING, ServerError, ServerPool, describe_host_engine
 from .tasks import TASKS, Dirs, subset_sha256
 
 DEFAULT_ENGINE = "llama-b12199-cpu-x64"
@@ -83,7 +83,7 @@ def cmd_run(args) -> int:
     except ServerError as exc:
         raise SystemExit(f"error: {exc}")
     model_path, model = _model(args)
-    params = {"temperature": 0, "seed": 1, "ctx": args.ctx, "servers": args.servers,
+    params = {**SAMPLING, "ctx": args.ctx, "servers": args.servers,
               "threads_per_server": args.threads, "limit": args.limit, "gpu_layers": args.gpu_layers,
               "chat_template_kwargs": CHAT_TEMPLATE_KWARGS}
 
