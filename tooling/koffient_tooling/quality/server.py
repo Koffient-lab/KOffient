@@ -214,7 +214,9 @@ class ServerPool:
             for attempt in range(self.MAX_RESTARTS + 1):
                 try:
                     return server.chat(*args, **kwargs)
-                except (requests.RequestException, ServerError):
+                except requests.ConnectionError:
+                    # Only a dropped connection can mean a crash; an HTTP error from a live server (e.g. output the
+                    # parser rejected) is an answer and must not wait for the process to exit.
                     if not server.is_dead() or attempt == self.MAX_RESTARTS:
                         raise
                     with self._lock:

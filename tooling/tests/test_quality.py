@@ -261,6 +261,18 @@ def test_pool_restarts_a_dead_server_and_asks_again(tmp_path):
     with pytest.raises(requests.ConnectionError):
         pool.chat([], 4)
 
+    class Unparsed(FlakyServer):
+        def chat(self, *args, **kwargs):
+            raise srv.UnparsedOutput("does not match the expected format")
+
+        def is_dead(self):
+            raise AssertionError("an answer from a live server must not trigger the crash check")
+
+    pool._free.get_nowait()
+    pool._free.put(Unparsed())
+    with pytest.raises(srv.UnparsedOutput):
+        pool.chat([], 4)
+
 
 def test_every_request_switches_penalties_off(monkeypatch):
     from koffient_tooling.quality import server as srv
