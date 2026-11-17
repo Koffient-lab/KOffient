@@ -2,6 +2,7 @@
 
 Python-инструменты для подготовки и измерения моделей Koffient:
 
+- `model fetch`, `model convert`, `model quantize` — свои файлы модели из исходника на Hugging Face;
 - `bench run` — замеры скорости и памяти на Android-устройстве через adb;
 - `quality run`, `quality closeness` — оценка качества модели на компьютере;
 - `bench report` — графики и таблицы из записанных результатов.
@@ -14,6 +15,39 @@ Python-инструменты для подготовки и измерения 
 python -m venv <папка вне репозитория>
 <venv>/Scripts/python -m pip install -e "tooling[dev]"
 ```
+
+## Свои файлы модели
+
+```
+python -m koffient_tooling model fetch --work-dir <рабочая папка> --repo <org/модель> --revision <полный хэш коммита>
+python -m koffient_tooling model convert --work-dir <рабочая папка> --source-dir <папка из fetch> --name <имя модели>
+python -m koffient_tooling model quantize --work-dir <рабочая папка> --input <f16.gguf из convert> --type q8_0,q4_k_m [--embedding-type q5_0]
+python -m koffient_tooling model show --work-dir <рабочая папка>
+```
+
+- `fetch` скачивает все файлы репозитория в закреплённой ревизии в `sources/<модель>/<ревизия>/` и сверяет
+  контрольные суммы с теми, что указаны на Hugging Face.
+- `convert` запускает штатный `convert_hf_to_gguf.py` из исходников llama.cpp той же версии, что и движок
+  (`<рабочая папка>/llama.cpp`), в отдельном окружении `<рабочая папка>/venv-convert` с версиями из
+  `llama.cpp/requirements/requirements-convert_hf_to_gguf.txt`. Результат — `models/<модель>/<ревизия>/<модель>-f16.gguf`.
+- `quantize` запускает `llama-quantize` из официальной сборки той же версии. Принимает только файлы из `convert`.
+  `--embedding-type` задаёт тип таблицы словаря; без него llama.cpp ставит Q8_0, если ширина модели не кратна 256.
+  Имя рецепта: тип и переопределения, например `q4_k_m-emb-q5_0`.
+
+Каждый шаг пишет строку в `results/builds.jsonl`: откуда вход, чем собрано (коммит конвертера и версии пакетов
+или версия и контрольная сумма `llama-quantize`), с какими аргументами, контрольная сумма и содержимое результата.
+Вывод инструментов — в `results/raw/builds/<build_id>/`. Записи замеров находят свою сборку по sha256 файла
+(поле `model.build`), в таблицах такие файлы подписаны `built <рецепт>`.
+
+Окружение конвертера:
+
+```
+py -3.11 -m venv <рабочая папка>/venv-convert
+<рабочая папка>/venv-convert/Scripts/python -m pip install -r <рабочая папка>/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
+```
+
+У моделей с общей таблицей словаря (`tie_word_embeddings`) своя конвертация хранит таблицу один раз;
+в официальных GGUF Qwen2.5 она лежит дважды.
 
 ## Замер
 
@@ -69,7 +103,8 @@ python -m koffient_tooling quality show --work-dir <рабочая папка>
   на фиксированном английском и русском тексте (`llama-perplexity`). Логиты fp16 сохраняются один раз
   в `results/kld/`, около 3 ГБ на язык.
 - `quality show` — таблица «задача × вариант модели» с долей ответов, изменившихся относительно базовой
-  модели.
+  модели. Базовая модель — самый большой файл или та, чьё имя содержит `--base`. Близость показывается
+  только та, что посчитана относительно выбранной базовой модели.
 
 ### Быстрый набор
 

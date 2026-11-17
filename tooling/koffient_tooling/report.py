@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import record as runs
+from .model import variant_name
 from .quality import record as quality
 from .quality.cli import _label, comparison
 from .quality.run import MIN_HEADROOM
@@ -64,7 +65,7 @@ def _pyplot():
 def _variant_ticks(ax, variants: list[dict]) -> None:
     """Variants sit at even steps in order of file size; the size itself is in the tick label."""
     ax.set_xticks(range(len(variants)))
-    ax.set_xticklabels([f"{v['model'].get('quant_label') or '?'}\n{v['model']['file_bytes'] / 1e6:.0f} МБ"
+    ax.set_xticklabels([f"{variant_name(v['model'])}\n{v['model']['file_bytes'] / 1e6:.0f} МБ"
                         for v in variants])
     ax.set_xlim(-0.5, len(variants) - 0.5)
 
@@ -274,7 +275,7 @@ def chart_speed(records: list[dict], path: Path) -> list[dict]:
     ]
     fig, axes = plt.subplots(1, len(panels), figsize=(3.4 * len(panels), 3.6))
     table = []
-    labels = [f"{r['engine']['build_id']}\n{r['model'].get('quant_label') or ''}" for r in chosen]
+    labels = [f"{r['engine']['build_id']}\n{variant_name(r['model'])}" for r in chosen]
     for ax, (title, pick) in zip(axes, panels):
         values = [pick(r["metrics"]) for r in chosen]
         for x, (median, low, high) in enumerate(values):
@@ -323,8 +324,8 @@ def build(results_dir: Path, out_dir: Path, base_hint: str | None = None) -> Pat
         "tooling_commit": runs.tooling_commit(),
         "base": _label(data["base"]) if data["base"] else None,
         "run_ids": [r["run_id"] for r in run_records if r["status"] == "ok"],
-        "eval_ids": sorted(r["eval_id"] for r in list(quality.latest_ok(quality_records, "task").values())
-                           + list(quality.latest_ok(quality_records, "closeness").values())),
+        "eval_ids": sorted([r["eval_id"] for r in quality.latest_ok(quality_records, "task").values()]
+                           + data.get("closeness_ids", [])),
     }
     (out_dir / "data.json").write_text(json.dumps({"sources": sources, "tables": tables}, ensure_ascii=False,
                                                   indent=1), encoding="utf-8", newline="\n")

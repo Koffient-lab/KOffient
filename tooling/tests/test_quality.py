@@ -188,6 +188,29 @@ def test_comparison_uses_headline_groups_and_flat_mark(tmp_path):
     assert small["groups"]["irrelevance"]["changed"]["better"] == 1
 
 
+def test_closeness_is_shown_only_against_the_chosen_base(tmp_path):
+    from koffient_tooling.quality.cli import comparison
+
+    official, ours, quant = "a" * 64, "b" * 64, "c" * 64
+
+    def closeness_record(eval_id: str, model_sha: str, size: int, base_sha: str, kld: float | None):
+        metrics = {"ppl": 10.0} if kld is None else {"ppl": 10.5, "kld_mean": kld, "same_top_pct": 90.0}
+        rec.append(make_record(eval_id=eval_id, kind="closeness", task=None, corpus={"lang": "en"},
+                               base={"sha256": base_sha}, metrics=metrics,
+                               model={"sha256": model_sha, "file": f"{eval_id}.gguf", "file_bytes": size}), tmp_path)
+
+    closeness_record("official-base", official, 300, official, None)
+    closeness_record("quant-vs-official", quant, 100, official, 0.03)
+    closeness_record("ours-base", ours, 200, ours, None)
+    closeness_record("quant-vs-ours", quant, 100, ours, 0.01)
+    by_default = comparison(rec.load(tmp_path), tmp_path, None)  # the largest file is the base
+    assert by_default["closeness"]["en"][quant + "|"]["kld_mean"] == 0.03
+    assert ours + "|" not in by_default["closeness"]["en"]
+    chosen = comparison(rec.load(tmp_path), tmp_path, "ours-base")
+    assert chosen["closeness"]["en"][quant + "|"]["kld_mean"] == 0.01
+    assert chosen["closeness_ids"] == ["ours-base", "quant-vs-ours"]
+
+
 # --- records ----------------------------------------------------------------------------------------------------
 
 def make_record(**overrides) -> dict:

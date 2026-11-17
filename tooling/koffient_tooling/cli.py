@@ -1,4 +1,5 @@
-"""Command line entry point: `python -m koffient_tooling bench run|show`, `... quality run|closeness|show`."""
+"""Command line entry point: `python -m koffient_tooling bench run|show|report`, `... model fetch|convert|quantize|show`,
+`... quality run|closeness|show`."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from . import record as rec
 from .bench import REMOTE_ROOT, BenchParams, ProbeError, measure
+from .builds import attach
 from .device import Device, DeviceError
 from .engine import BINARIES, EngineError, describe_build
 from .model import describe_model, sha256_file
@@ -66,7 +68,7 @@ def cmd_run(args) -> int:
         raise SystemExit(f"error: build is for {engine['abi']}, device is {device_facts['abi']}")
 
     print(f"model passport: {model_path.name}", flush=True)
-    model = describe_model(model_path, source=args.source)
+    model = attach(describe_model(model_path, source=args.source), results_dir)
     started = datetime.now(timezone.utc)
     run_id = rec.new_run_id(model, engine, started)
     raw_dir = results_dir / "raw" / run_id
@@ -180,6 +182,118 @@ def cmd_report(args) -> int:
     return 0
 
 
+def _need_work(args) -> Path:
+    work = _work_dir(args)
+    if not work:
+        raise SystemExit("error: pass --work-dir or set KOFFIENT_WORK")
+    return work
+
+
+def _report_build(record: dict) -> int:
+    if record["status"] != "ok":
+        print(f"FAILED: {record['error']}", file=sys.stderr)
+        return 1
+    out = record["output"]
+    if record["kind"] == "fetch":
+        print(f"fetched {len(out['files'])} files to {out['dir']}")
+    else:
+        p = out["passport"]
+        print(f"{record['recipe']}: {out['file']}\n  {out['file_bytes'] / 1e6:.1f} MB, {p['bits_per_param']} bits/param, "
+              f"vocabulary tensors {out['vocab_tensor_types']}, sha256 {out['sha256'][:12]}")
+    print(f"build {record['build_id']}")
+    return 0
+
+
+def cmd_model_fetch(args) -> int:
+    from . import builds
+
+    return _report_build(builds.fetch(args.repo, args.revision, _need_work(args), _results_dir(args)))
+
+
+def cmd_model_convert(args) -> int:
+    from . import builds
+
+    work = _need_work(args)
+    python = Path(args.python) if args.python else work / "venv-convert" / "Scripts" / "python.exe"
+    llama_cpp = Path(args.llama_cpp) if args.llama_cpp else work / "llama.cpp"
+    return _report_build(builds.convert(Path(args.source_dir), args.name, args.outtype, work, _results_dir(args),
+                                        python=python, llama_cpp=llama_cpp))
+
+
+def cmd_model_quantize(args) -> int:
+    from . import builds
+    from .quality.cli import DEFAULT_ENGINE
+
+    work = _need_work(args)
+    engine_dir = Path(args.engine_dir) if args.engine_dir else work / "host" / DEFAULT_ENGINE
+    path = Path(args.input)
+    if not path.is_file():
+        raise SystemExit(f"error: input file not found: {path}")
+    code = 0
+    for qtype in args.type.split(","):
+        code |= _report_build(builds.quantize(path, qtype, _results_dir(args), engine_dir=engine_dir,
+                                              embedding_type=args.embedding_type, threads=args.threads))
+    return code
+
+
+def cmd_model_show(args) -> int:
+    from . import builds
+
+    records = builds.load(_results_dir(args))
+    if not records:
+        print("no builds recorded yet")
+        return 0
+    rows = [["build", "recipe", "MB", "bits/param", "vocab tensors", "sha256", "status"]]
+    for r in records:
+        out = r["output"]
+        if r["kind"] == "fetch":
+            size = sum(f["bytes"] for f in out.get("files", {}).values()) / 1e6 if out else None
+            rows.append([r["build_id"], r["source"], _fmt(size, 0), "-", "-", "-", r["status"]])
+            continue
+        rows.append([r["build_id"], r["recipe"], _fmt(out["file_bytes"] / 1e6, 1) if out else "-",
+                     _fmt(out["passport"]["bits_per_param"], 2) if out else "-",
+                     ",".join(f"{k.split('.')[0]}={v}" for k, v in out.get("vocab_tensor_types", {}).items()) or "-",
+                     out.get("sha256", "-")[:12], r["status"]])
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    for row in rows:
+        print("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip())
+    return 0
+
+
+def register_model(groups, common) -> None:
+    model = groups.add_parser("model", help="build our own model files: fetch, convert, quantize").add_subparsers(
+        dest="command", required=True)
+
+    fetch = model.add_parser("fetch", help="download a Hugging Face model at a fixed revision")
+    common(fetch)
+    fetch.add_argument("--repo", required=True, help="e.g. Qwen/Qwen2.5-0.5B-Instruct")
+    fetch.add_argument("--revision", required=True, help="full commit hash of the repository")
+    fetch.set_defaults(func=cmd_model_fetch)
+
+    convert = model.add_parser("convert", help="convert a fetched model to GGUF")
+    common(convert)
+    convert.add_argument("--source-dir", required=True, help="folder made by `model fetch`")
+    convert.add_argument("--name", required=True, help="model name written into the file, e.g. Qwen2.5-0.5B-Instruct")
+    convert.add_argument("--outtype", default="f16", choices=["f16", "bf16", "f32"])
+    convert.add_argument("--python", help="interpreter with the converter's requirements "
+                                          "(default: <work-dir>/venv-convert/Scripts/python.exe)")
+    convert.add_argument("--llama-cpp", help="llama.cpp source tree of the engine version (default: <work-dir>/llama.cpp)")
+    convert.set_defaults(func=cmd_model_convert)
+
+    quant = model.add_parser("quantize", help="quantize a converted file with llama-quantize")
+    common(quant)
+    quant.add_argument("--input", required=True, help="GGUF made by `model convert`")
+    quant.add_argument("--type", required=True, help="llama-quantize type(s), comma-separated, e.g. q8_0,q4_k_m")
+    quant.add_argument("--embedding-type", help="type of the vocabulary table, e.g. q5_0 (default: llama.cpp's choice)")
+    quant.add_argument("--threads", type=int, default=16)
+    quant.add_argument("--engine-dir", help="folder with llama-quantize (default: <work-dir>/host/<engine>)")
+    quant.set_defaults(func=cmd_model_quantize)
+
+    show = model.add_parser("show", help="print recorded builds")
+    common(show)
+    show.set_defaults(func=cmd_model_show)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="koffient", description="Koffient model tooling")
     groups = parser.add_subparsers(dest="group", required=True)
@@ -215,6 +329,8 @@ def main(argv: list[str] | None = None) -> int:
     rep.add_argument("--out", help="output folder (default: <results-dir>/reports/<date>-<name>)")
     rep.add_argument("--base", help="part of the base variant's label (default: the largest model)")
     rep.set_defaults(func=cmd_report)
+
+    register_model(groups, common)
 
     from .quality import cli as quality_cli  # imported here: bench commands must work without its dependencies
 

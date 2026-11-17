@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import record as runs
-from ..model import describe_model, sha256_file
+from ..builds import attach
+from ..model import describe_model, sha256_file, variant_name
 from . import closeness, record as rec
 from .run import (MIN_HEADROOM, changed_answers, load_answers, run_task, score_block, separates_variants,
                   split_answers)
@@ -43,7 +44,7 @@ def _model(args) -> tuple[Path, dict]:
     if not path.is_file():
         raise SystemExit(f"error: model file not found: {path}")
     print(f"model passport: {path.name}", flush=True)
-    return path, describe_model(path, source=args.source)
+    return path, attach(describe_model(path, source=args.source), _results(args))
 
 
 def _base_record(kind: str, eval_id: str, started: datetime, model: dict, engine: dict, params: dict,
@@ -183,22 +184,24 @@ def cmd_closeness(args) -> int:
 def _label(variant: dict) -> str:
     model = variant["model"]
     suffix = f" {variant['label']}" if variant["label"] else ""
-    return f"{model.get('quant_label') or model['file']}{suffix} ({model['file_bytes'] / 1e6:.0f} MB)"
+    return f"{variant_name(model)}{suffix} ({model['file_bytes'] / 1e6:.0f} MB)"
 
 
 def comparison(records: list[dict], results: Path, base_hint: str | None) -> dict:
     """Variants, tasks and per-cell numbers for `show` and for the report charts."""
     tasks = rec.latest_ok(records, "task")
-    close = rec.latest_ok(records, "closeness")
     variants = {}
-    for record in list(tasks.values()) + list(close.values()):
+    for record in list(tasks.values()) + list(rec.latest_ok(records, "closeness").values()):
         variants[rec.variant_key(record)] = {"key": rec.variant_key(record), "model": record["model"],
                                              "label": record.get("label")}
     if not variants:
-        return {"variants": [], "base": None, "tasks": {}, "flat": [], "closeness": {}}
+        return {"variants": [], "base": None, "tasks": {}, "flat": [], "closeness": {}, "closeness_ids": []}
     order = sorted(variants.values(), key=lambda v: (-v["model"]["file_bytes"], v["label"] or ""))
     hinted = [v for v in order if base_hint and base_hint.lower() in _label(v).lower()]
     base = (hinted or order)[0]
+    # Closeness is only comparable when it was measured against the same base file.
+    close = rec.latest_ok([r for r in records if r["kind"] == "closeness"
+                           and (r.get("base") or {}).get("sha256") == base["model"]["sha256"]], "closeness")
 
     loaded: dict[str, dict | None] = {}
 
@@ -242,7 +245,8 @@ def comparison(records: list[dict], results: Path, base_hint: str | None) -> dic
     closeness_cells: dict[str, dict[str, dict]] = {}
     for (key, lang), record in close.items():
         closeness_cells.setdefault(lang, {})[key] = record["metrics"]
-    return {"variants": order, "base": base, "tasks": cells, "flat": flat, "closeness": closeness_cells}
+    return {"variants": order, "base": base, "tasks": cells, "flat": flat, "closeness": closeness_cells,
+            "closeness_ids": sorted(r["eval_id"] for r in close.values())}
 
 
 def cmd_show(args) -> int:

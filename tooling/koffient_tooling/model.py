@@ -37,6 +37,14 @@ def summarize_tensors(tensors: list[tuple[str, str, int, int]]) -> dict:
     }
 
 
+def variant_name(model: dict) -> str:
+    """Short name of a model file in tables and charts: the recipe for our own builds, else the file's quant type."""
+    build = model.get("build")
+    if build:
+        return f"built {build['recipe']}"
+    return model.get("quant_label") or model["file"]
+
+
 def describe_model(path: Path, source: str | None = None) -> dict:
     """Read the `model` block of a record from a GGUF file."""
     import gguf  # heavy import (numpy), keep it out of module load
