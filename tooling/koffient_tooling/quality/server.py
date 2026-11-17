@@ -29,6 +29,17 @@ class ServerError(RuntimeError):
     pass
 
 
+class UnparsedOutput(ServerError):
+    """The model answered, but llama-server could not parse the answer (e.g. a malformed tool call).
+
+    This is the model's mistake, not a broken run: it is scored as a wrong answer.
+    """
+
+
+# llama-server's message when the chat parser rejects the model's own output (HTTP 500).
+_UNPARSED_MARKERS = ("does not match the expected",)
+
+
 def describe_host_engine(engine_dir: Path) -> dict:
     """Passport of the host engine: version and commit as the binary reports them, checksum of the binary."""
     binary = engine_dir / SERVER_BINARY
@@ -121,6 +132,8 @@ class LlamaServer:
             payload["grammar"] = grammar
         response = requests.post(f"{self.url}/v1/chat/completions", json=payload, timeout=timeout_s)
         if response.status_code != 200:
+            if response.status_code == 500 and any(m in response.text for m in _UNPARSED_MARKERS):
+                raise UnparsedOutput(response.text[:300])
             raise ServerError(f"HTTP {response.status_code}: {response.text[:300]}")
         body = response.json()
         choice = body["choices"][0]

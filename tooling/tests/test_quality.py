@@ -198,6 +198,32 @@ def test_latest_skips_runs_with_failed_requests_or_hidden_penalties(tmp_path):
     assert [r["eval_id"] for r in latest.values()] == ["good"]
 
 
+def test_unparsed_output_is_a_wrong_answer_not_a_broken_run(tmp_path):
+    from koffient_tooling.quality.server import ServerError, UnparsedOutput
+
+    class Pool:
+        size = 2
+
+        def chat(self, messages, max_tokens, tools, grammar):
+            text = messages[0]["content"]
+            if text == "bad":
+                raise UnparsedOutput('{"error":{"code":500,"message":"does not match the expected format"}}')
+            if text == "down":
+                raise ServerError("connection refused")
+            return {"content": "ok", "tool_calls": [], "finish_reason": "stop", "prompt_tokens": 1,
+                    "completion_tokens": 1}
+
+    task = tasks.TASKS["mgsm-en"]
+    examples = [tasks.Example(id=t, pair_key=t, messages=[{"role": "user", "content": t}], reference="1")
+                for t in ("good", "bad", "down")]
+    metrics = run.run_task(Pool(), task, examples, lambda ex, ans: {"score": 1.0, "detail": {}}, tmp_path)
+    assert metrics["n_unparsed"] == 1 and metrics["n_request_errors"] == 1
+    rows = run.load_answers(tmp_path)
+    assert rows["good"]["score"] == 1.0
+    assert rows["bad"]["score"] == 0.0 and rows["bad"]["error"] is None and rows["bad"]["detail"]["error"] == "unparsed_output"
+    assert rows["down"]["error"].startswith("ServerError")
+
+
 def test_every_request_switches_penalties_off(monkeypatch):
     from koffient_tooling.quality import server as srv
 

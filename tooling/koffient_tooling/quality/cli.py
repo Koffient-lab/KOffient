@@ -123,7 +123,8 @@ def cmd_run(args) -> int:
             rec.append(record, results)
             m = record["metrics"]
             line = (f"{m['value']:.3f} [{m['ci95'][0]:.3f}, {m['ci95'][1]:.3f}] n={m['n']} "
-                    f"truncated={m['n_truncated']} errors={m['n_request_errors']} {m['wall_s']:.0f}s"
+                    f"truncated={m['n_truncated']} unparsed={m.get('n_unparsed', 0)} errors={m['n_request_errors']} "
+                    f"{m['wall_s']:.0f}s"
                     if record["status"] == "ok" else f"FAILED: {record['error']}")
             if failed and record["status"] != "ok" and "requests failed" in (record["error"] or ""):
                 break  # the pool is broken; the remaining tasks would fail the same way

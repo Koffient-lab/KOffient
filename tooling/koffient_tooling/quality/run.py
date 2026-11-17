@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .server import ServerError, ServerPool
+from .server import ServerError, ServerPool, UnparsedOutput
 from .tasks import Example, Task
 
 ANSWERS_FILE = "answers.jsonl"
@@ -39,6 +39,7 @@ def summarize(task: Task, rows: list[dict], wall_s: float) -> dict:
         "ci95": confidence_interval(scores),
         "n": len(rows),
         "n_request_errors": sum(1 for row in rows if row["error"]),
+        "n_unparsed": sum(1 for row in rows if row.get("unparsed")),
         "n_truncated": sum(1 for row in rows if row["finish_reason"] == "length"),
         "prompt_tokens": sum(row["prompt_tokens"] or 0 for row in rows),
         "completion_tokens": sum(row["completion_tokens"] or 0 for row in rows),
@@ -53,6 +54,10 @@ def run_task(server: ServerPool, task: Task, examples: list[Example], scorer, ra
         try:
             answer = server.chat(example.messages, task.max_tokens, example.tools, task.grammar)
             answer["error"] = None
+        except UnparsedOutput as error:
+            # The model did answer; the answer is wrong whatever the task (even "no call needed": it tried a call).
+            answer = {"content": "", "tool_calls": [], "finish_reason": "unparsed", "prompt_tokens": None,
+                      "completion_tokens": None, "error": None, "unparsed": str(error)[:300]}
         except (ServerError, OSError, ValueError, KeyError) as error:
             answer = {"content": "", "tool_calls": [], "finish_reason": None, "prompt_tokens": None,
                       "completion_tokens": None, "error": f"{type(error).__name__}: {error}"[:500]}
@@ -65,7 +70,12 @@ def run_task(server: ServerPool, task: Task, examples: list[Example], scorer, ra
 
     rows = []
     for example, answer in zip(examples, answers):
-        scored = scorer(example, answer) if not answer["error"] else {"score": 0.0, "detail": {"error": "request"}}
+        if answer["error"]:
+            scored = {"score": 0.0, "detail": {"error": "request"}}
+        elif answer.get("unparsed"):
+            scored = {"score": 0.0, "detail": {"error": "unparsed_output"}}
+        else:
+            scored = scorer(example, answer)
         rows.append({"id": example.id, "pair_key": example.pair_key, "stratum": example.stratum, **answer, **scored})
 
     raw_dir.mkdir(parents=True, exist_ok=True)
