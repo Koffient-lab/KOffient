@@ -61,17 +61,24 @@ def _run(command: list[str], log_path: Path, timeout_s: int) -> str:
     return text
 
 
+def _gpu(gpu_layers: str | None) -> list[str]:
+    return ["-ngl", gpu_layers] if gpu_layers is not None else []
+
+
 def save_base_logits(engine_dir: Path, model: Path, corpus: Path, logits: Path, log_path: Path, *,
-                     chunks: int = DEFAULT_CHUNKS, threads: int = 16, timeout_s: int = 3600) -> dict:
+                     chunks: int = DEFAULT_CHUNKS, threads: int = 16, gpu_layers: str | None = None,
+                     timeout_s: int = 3600) -> dict:
     logits.parent.mkdir(parents=True, exist_ok=True)
     text = _run([str(engine_dir / PERPLEXITY_BINARY), "-m", str(model), "-f", str(corpus), "-c", str(N_CTX),
-                 "--chunks", str(chunks), "-t", str(threads), "--kl-divergence-base", str(logits)],
-                log_path, timeout_s)
+                 "--chunks", str(chunks), "-t", str(threads), "--kl-divergence-base", str(logits),
+                 *_gpu(gpu_layers)], log_path, timeout_s)
     return parse_base(text)
 
 
 def compare_with_base(engine_dir: Path, model: Path, logits: Path, log_path: Path, *,
-                      chunks: int = DEFAULT_CHUNKS, threads: int = 16, timeout_s: int = 3600) -> dict:
+                      chunks: int = DEFAULT_CHUNKS, threads: int = 16, gpu_layers: str | None = None,
+                      timeout_s: int = 3600) -> dict:
     text = _run([str(engine_dir / PERPLEXITY_BINARY), "-m", str(model), "-c", str(N_CTX), "--chunks", str(chunks),
-                 "-t", str(threads), "--kl-divergence-base", str(logits), "--kl-divergence"], log_path, timeout_s)
+                 "-t", str(threads), "--kl-divergence-base", str(logits), "--kl-divergence", *_gpu(gpu_layers)],
+                log_path, timeout_s)
     return parse_kld(text)

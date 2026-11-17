@@ -15,6 +15,9 @@ import requests
 from ..model import sha256_file
 
 SERVER_BINARY = "llama-server.exe"
+# Models with a thinking mode (Qwen3) answer in their non-thinking mode, the same footing as models without one.
+# Templates that do not use the variable ignore it, so the prompt of other models does not change.
+CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
 
 
 class ServerError(RuntimeError):
@@ -38,7 +41,7 @@ def describe_host_engine(engine_dir: Path) -> dict:
         "tag": f"b{version.group(1)}",
         "commit": version.group(2)[:7],
         "built_with": built.group(1).strip() if built else None,
-        "backend": "cpu",
+        "backend": "cuda" if (engine_dir / "ggml-cuda.dll").is_file() else "cpu",
         "binaries_sha256": {SERVER_BINARY: sha256_file(binary)},
     }
 
@@ -57,11 +60,13 @@ class LlamaServer:
     """
 
     def __init__(self, engine_dir: Path, model: Path, log_path: Path, *, ctx: int = 4096, threads: int = 2,
-                 start_timeout_s: int = 300):
+                 gpu_layers: str | None = None, start_timeout_s: int = 300):
         self.command = [
             str(engine_dir / SERVER_BINARY), "-m", str(model), "--host", "127.0.0.1",
             "-c", str(ctx), "-np", "1", "-t", str(threads), "--jinja", "--no-webui",
         ]
+        if gpu_layers is not None:
+            self.command += ["-ngl", gpu_layers]
         self.log_path = log_path
         self.start_timeout_s = start_timeout_s
         self.url = ""
@@ -104,7 +109,7 @@ class LlamaServer:
              grammar: str | None = None, timeout_s: int = 600) -> dict:
         """One greedy chat completion. Returns text, parsed tool calls, finish reason and token counts."""
         payload = {"messages": messages, "max_tokens": max_tokens, "temperature": 0, "seed": 1,
-                   "cache_prompt": False, "stream": False}
+                   "cache_prompt": False, "stream": False, "chat_template_kwargs": CHAT_TEMPLATE_KWARGS}
         if tools:
             payload["tools"] = tools
         if grammar:
@@ -138,9 +143,10 @@ class ServerPool:
     """Several independent single-slot servers for the same model; chat() uses whichever one is free."""
 
     def __init__(self, engine_dir: Path, model: Path, log_dir: Path, *, servers: int = 8, ctx: int = 4096,
-                 threads: int = 2):
+                 threads: int = 2, gpu_layers: str | None = None):
         self.size = servers
-        self._servers = [LlamaServer(engine_dir, model, log_dir / f"server-{i}.log", ctx=ctx, threads=threads)
+        self._servers = [LlamaServer(engine_dir, model, log_dir / f"server-{i}.log", ctx=ctx, threads=threads,
+                                     gpu_layers=gpu_layers)
                          for i in range(servers)]
         self._free: queue.Queue[LlamaServer] = queue.Queue()
 

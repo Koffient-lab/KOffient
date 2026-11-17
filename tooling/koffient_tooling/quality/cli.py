@@ -14,7 +14,7 @@ from . import closeness, record as rec
 from .run import (MIN_HEADROOM, changed_answers, load_answers, run_task, score_block, separates_variants,
                   split_answers)
 from .scorers import ScoringError, make_scorer
-from .server import ServerError, ServerPool, describe_host_engine
+from .server import CHAT_TEMPLATE_KWARGS, ServerError, ServerPool, describe_host_engine
 from .tasks import TASKS, Dirs, subset_sha256
 
 DEFAULT_ENGINE = "llama-b12199-cpu-x64"
@@ -84,14 +84,15 @@ def cmd_run(args) -> int:
         raise SystemExit(f"error: {exc}")
     model_path, model = _model(args)
     params = {"temperature": 0, "seed": 1, "ctx": args.ctx, "servers": args.servers,
-              "threads_per_server": args.threads, "limit": args.limit}
+              "threads_per_server": args.threads, "limit": args.limit, "gpu_layers": args.gpu_layers,
+              "chat_template_kwargs": CHAT_TEMPLATE_KWARGS}
 
     session = datetime.now(timezone.utc)
     log_dir = results / "raw" / "quality" / _eval_id(session, model, "servers")
     failed = 0
     try:
         server = ServerPool(engine_dir, model_path, log_dir, servers=args.servers, ctx=args.ctx,
-                            threads=args.threads).__enter__()
+                            threads=args.threads, gpu_layers=args.gpu_layers).__enter__()
     except ServerError as exc:
         raise SystemExit(f"error: {exc}")
     try:
@@ -145,11 +146,13 @@ def cmd_closeness(args) -> int:
             raise SystemExit(f"error: unknown corpus language '{lang}'")
         file_name, source = CORPORA[lang]
         corpus = work / "datasets" / "corpus" / file_name
-        logits = results / "kld" / f"{base_sha[:12]}-{lang}-c{closeness.N_CTX}x{args.chunks}.kld"
+        # Base logits from another backend are not the same numbers: keep them apart (CPU files have no suffix).
+        backend = "" if engine["backend"] == "cpu" else f"-{engine['backend']}"
+        logits = results / "kld" / f"{base_sha[:12]}-{lang}-c{closeness.N_CTX}x{args.chunks}{backend}.kld"
         started = datetime.now(timezone.utc)
         record = _base_record("closeness", _eval_id(started, model, f"closeness-{lang}"), started, model, engine,
-                              {"n_ctx": closeness.N_CTX, "chunks": args.chunks, "threads": args.threads},
-                              args.label)
+                              {"n_ctx": closeness.N_CTX, "chunks": args.chunks, "threads": args.threads,
+                               "gpu_layers": args.gpu_layers}, args.label)
         record["corpus"] = {"lang": lang, "file": file_name, "source": source}
         record["base"] = {"file": base_path.name, "sha256": base_sha}
         log = results / record["raw_dir"] / "llama-perplexity.log"
@@ -159,12 +162,13 @@ def cmd_closeness(args) -> int:
                 print(f"{lang}: saving base logits to {logits}", flush=True)
                 base_metrics = closeness.save_base_logits(engine_dir, base_path, corpus, logits,
                                                           log.with_name("base.log"), chunks=args.chunks,
-                                                          threads=args.threads)
+                                                          threads=args.threads, gpu_layers=args.gpu_layers)
             if is_base:
                 record["metrics"] = base_metrics
             else:
                 record["metrics"] = closeness.compare_with_base(engine_dir, model_path, logits, log,
-                                                                chunks=args.chunks, threads=args.threads)
+                                                                chunks=args.chunks, threads=args.threads,
+                                                                gpu_layers=args.gpu_layers)
             record["status"] = "ok"
         except (closeness.ClosenessError, OSError) as exc:
             record["error"] = f"{type(exc).__name__}: {exc}"
@@ -327,6 +331,7 @@ def register(groups, common) -> None:
     run.add_argument("--servers", type=int, default=8, help="independent single-slot servers to run in parallel")
     run.add_argument("--threads", type=int, default=2, help="threads per server")
     run.add_argument("--ctx", type=int, default=4096, help="context size")
+    run.add_argument("--gpu-layers", help="layers to put on the GPU, e.g. 'all' (with a CUDA build in --engine-dir)")
     run.set_defaults(func=cmd_run)
 
     close = quality.add_parser("closeness", help="perplexity and KL divergence against the fp16 base")
@@ -335,6 +340,7 @@ def register(groups, common) -> None:
     close.add_argument("--langs", default="en,ru")
     close.add_argument("--chunks", type=int, default=closeness.DEFAULT_CHUNKS)
     close.add_argument("--threads", type=int, default=16)
+    close.add_argument("--gpu-layers", help="layers to put on the GPU, e.g. 'all' (with a CUDA build in --engine-dir)")
     close.set_defaults(func=cmd_closeness)
 
     show = quality.add_parser("show", help="compare recorded models task by task")
