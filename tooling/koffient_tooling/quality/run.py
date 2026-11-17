@@ -64,9 +64,11 @@ def run_task(server: ServerPool, task: Task, examples: list[Example], scorer, ra
         return answer
 
     started = time.monotonic()
+    restarts_before = getattr(server, "restarts", 0)
     with ThreadPoolExecutor(max_workers=server.size) as pool:
         answers = list(pool.map(ask, examples))
     wall_s = time.monotonic() - started
+    restarts = getattr(server, "restarts", 0) - restarts_before
 
     rows = []
     for example, answer in zip(examples, answers):
@@ -82,7 +84,7 @@ def run_task(server: ServerPool, task: Task, examples: list[Example], scorer, ra
     with open(raw_dir / ANSWERS_FILE, "w", encoding="utf-8", newline="\n") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    return summarize(task, rows, wall_s)
+    return {**summarize(task, rows, wall_s), "n_server_restarts": restarts}
 
 
 def load_answers(raw_dir: Path) -> dict[str, dict]:

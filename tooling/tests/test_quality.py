@@ -224,6 +224,44 @@ def test_unparsed_output_is_a_wrong_answer_not_a_broken_run(tmp_path):
     assert rows["down"]["error"].startswith("ServerError")
 
 
+def test_pool_restarts_a_dead_server_and_asks_again(tmp_path):
+    import requests
+
+    from koffient_tooling.quality import server as srv
+
+    class FlakyServer:
+        def __init__(self):
+            self.dead, self.calls, self.restarted = False, 0, 0
+
+        def chat(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                self.dead = True
+                raise requests.ConnectionError("connection refused")
+            return {"content": "answer"}
+
+        def is_dead(self):
+            return self.dead
+
+        def restart(self):
+            self.dead, self.restarted = False, self.restarted + 1
+
+    pool = srv.ServerPool(Path("."), Path("m.gguf"), tmp_path, servers=1)  # not entered: the queue is empty
+    flaky = FlakyServer()
+    pool._free.put(flaky)
+    assert pool.chat([], 4)["content"] == "answer"
+    assert flaky.restarted == 1 and pool.restarts == 1
+
+    class AliveButFailing(FlakyServer):
+        def chat(self, *args, **kwargs):
+            raise requests.ConnectionError("timeout")  # the process is alive: not a crash, do not retry
+
+    pool._free.get_nowait()
+    pool._free.put(AliveButFailing())
+    with pytest.raises(requests.ConnectionError):
+        pool.chat([], 4)
+
+
 def test_every_request_switches_penalties_off(monkeypatch):
     from koffient_tooling.quality import server as srv
 

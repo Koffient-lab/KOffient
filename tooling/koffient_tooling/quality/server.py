@@ -7,6 +7,7 @@ import queue
 import re
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -93,7 +94,7 @@ class LlamaServer:
         port = _free_port()
         self.url = f"http://127.0.0.1:{port}"
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._log = open(self.log_path, "wb")
+        self._log = open(self.log_path, "ab")  # append: a restarted server keeps the log of the crash above
         self._proc = subprocess.Popen(self.command + ["--port", str(port)], stdout=self._log,
                                       stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         deadline = time.monotonic() + self.start_timeout_s
@@ -109,6 +110,15 @@ class LlamaServer:
             time.sleep(0.5)
         self.__exit__(None, None, None)
         raise ServerError(f"llama-server did not become ready in {self.start_timeout_s} s, see {self.log_path}")
+
+    def is_dead(self) -> bool:
+        return self._proc is not None and self._proc.poll() is not None
+
+    def restart(self) -> None:
+        self.__exit__(None, None, None)
+        with open(self.log_path, "ab") as log:
+            log.write(b"\n==== koffient: server died, restarted ====\n")
+        self.__enter__()
 
     def __exit__(self, *exc) -> None:
         if self._proc and self._proc.poll() is None:
@@ -160,6 +170,9 @@ class LlamaServer:
 class ServerPool:
     """Several independent single-slot servers for the same model; chat() uses whichever one is free."""
 
+    # Servers on the CUDA build sometimes die with "out of memory" while the card has GBs free (journal P37-P40).
+    MAX_RESTARTS = 3
+
     def __init__(self, engine_dir: Path, model: Path, log_dir: Path, *, servers: int = 8, ctx: int = 4096,
                  threads: int = 2, gpu_layers: str | None = None):
         self.size = servers
@@ -167,6 +180,8 @@ class ServerPool:
                                      gpu_layers=gpu_layers)
                          for i in range(servers)]
         self._free: queue.Queue[LlamaServer] = queue.Queue()
+        self._lock = threading.Lock()
+        self.restarts = 0
 
     def __enter__(self) -> "ServerPool":
         try:
@@ -182,8 +197,21 @@ class ServerPool:
             server.__exit__(None, None, None)
 
     def chat(self, *args, **kwargs) -> dict:
+        """Ask a free server. If the server process died on this request, restart it and ask again.
+
+        A server with one slot answers deterministically (journal P31), so the answer from the restarted server is
+        the one the dead server would have given. Restarts are counted and land in the task record.
+        """
         server = self._free.get()
         try:
-            return server.chat(*args, **kwargs)
+            for attempt in range(self.MAX_RESTARTS + 1):
+                try:
+                    return server.chat(*args, **kwargs)
+                except (requests.RequestException, ServerError):
+                    if not server.is_dead() or attempt == self.MAX_RESTARTS:
+                        raise
+                    with self._lock:
+                        self.restarts += 1
+                    server.restart()
         finally:
             self._free.put(server)
