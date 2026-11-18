@@ -84,6 +84,8 @@ class LlamaServer:
             # Every request is computed from scratch (cache_prompt is off), so the host prompt cache (up to 8 GB per
             # server by default) and context checkpoints (state copies, large for hybrid models) only cost memory.
             "--cache-ram", "0", "--ctx-checkpoints", "0",
+            # Without mmap the repacked weights are the only copy in memory (with mmap the file pages stay too).
+            "--load-mode", "none",
         ]
         if gpu_layers is not None:
             self.command += ["-ngl", gpu_layers]
