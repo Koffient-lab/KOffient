@@ -67,7 +67,7 @@ def _base_record(kind: str, eval_id: str, started: datetime, model: dict, engine
 
 
 def _eval_id(started: datetime, model: dict, suffix: str) -> str:
-    parts = [model["name"], model.get("quant_label") or "", suffix]
+    parts = [model["name"], variant_name(model), suffix]  # the recipe, so variants of one quant type differ
     return "-".join([started.strftime("%Y%m%dT%H%M%SZ")] + [runs.slug(p) for p in parts if p])
 
 
@@ -93,6 +93,7 @@ def cmd_run(args) -> int:
     try:
         server = ServerPool(engine_dir, model_path, log_dir, servers=args.servers, ctx=args.ctx,
                             threads=args.threads, gpu_layers=args.gpu_layers).__enter__()
+        params["server_command"] = server.command_line()
     except ServerError as exc:
         raise SystemExit(f"error: {exc}")
     try:

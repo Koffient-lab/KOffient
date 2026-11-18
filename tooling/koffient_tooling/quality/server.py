@@ -208,6 +208,13 @@ class ServerPool:
         for server in self._servers:
             server.__exit__(None, None, None)
 
+    def command_line(self) -> list[str]:
+        """Server flags as run (binary and model by file name; the port differs per server)."""
+        command = list(self._servers[0].command)
+        command[0] = Path(command[0]).name
+        command[command.index("-m") + 1] = Path(command[command.index("-m") + 1]).name
+        return command
+
     def chat(self, *args, **kwargs) -> dict:
         """Ask a free server. If the server process died on this request, restart it and ask again.
 

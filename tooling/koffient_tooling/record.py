@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import subprocess
@@ -38,8 +39,12 @@ def new_run_id(model: dict, engine: dict, now: datetime | None = None) -> str:
     return "-".join([now.strftime("%Y%m%dT%H%M%SZ")] + [slug(p) for p in parts if p])
 
 
+@functools.lru_cache(maxsize=1)
 def tooling_commit() -> str:
-    """Commit of this tooling, with '-dirty' when tooling/ has uncommitted changes."""
+    """Commit of this tooling, with '-dirty' when tooling/ has uncommitted changes.
+
+    Read once per process: the code that runs is the code loaded at start, even if files change later.
+    """
     tooling_dir = Path(__file__).resolve().parents[1]
 
     def git(*args: str) -> str | None:

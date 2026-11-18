@@ -51,7 +51,7 @@ def recipe_name(qtype: str, embedding_type: str | None = None, imatrix: bool = F
         name += "-imat"
     for spec in tensor_types or []:
         pattern, _, ttype = spec.partition("=")
-        name += f"-{pattern.lower()}-{ttype.lower()}"
+        name += f"-{runs.slug(pattern)}-{runs.slug(ttype)}"  # a regex pattern must not leak into the file name
     return name
 
 
