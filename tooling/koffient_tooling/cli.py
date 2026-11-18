@@ -239,7 +239,8 @@ def cmd_model_quantize(args) -> int:
     for qtype in args.type.split(","):
         code |= _report_build(builds.quantize(path, qtype, _results_dir(args), engine_dir=engine_dir,
                                               embedding_type=args.embedding_type, threads=args.threads,
-                                              imatrix_path=Path(args.imatrix) if args.imatrix else None))
+                                              imatrix_path=Path(args.imatrix) if args.imatrix else None,
+                                              tensor_types=args.tensor_type))
     return code
 
 
@@ -309,6 +310,8 @@ def register_model(groups, common) -> None:
     quant.add_argument("--threads", type=int, default=16)
     quant.add_argument("--engine-dir", help="folder with llama-quantize (default: <work-dir>/host/<engine>)")
     quant.add_argument("--imatrix", help="importance matrix made by `model imatrix` for the same input file")
+    quant.add_argument("--tensor-type", action="append",
+                       help="llama-quantize override PATTERN=TYPE, repeatable, e.g. ffn_down=q4_0")
     quant.set_defaults(func=cmd_model_quantize)
 
     imat = model.add_parser("imatrix", help="importance matrix of a converted model over calibration text")

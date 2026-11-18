@@ -40,12 +40,19 @@ class BuildError(RuntimeError):
     pass
 
 
-def recipe_name(qtype: str, embedding_type: str | None = None, imatrix: bool = False) -> str:
-    """Short name of a quantization recipe: the llama-quantize type plus overrides, e.g. `q4_k_m-emb-q5_0-imat`."""
+def recipe_name(qtype: str, embedding_type: str | None = None, imatrix: bool = False,
+                tensor_types: list[str] | None = None) -> str:
+    """Short name of a quantization recipe: the llama-quantize type plus overrides,
+    e.g. `q4_k_m-emb-q5_0-imat` or `q4_0-imat-ffn_down-q4_0`."""
     name = qtype.lower()
     if embedding_type:
         name += f"-emb-{embedding_type.lower()}"
-    return name + "-imat" if imatrix else name
+    if imatrix:
+        name += "-imat"
+    for spec in tensor_types or []:
+        pattern, _, ttype = spec.partition("=")
+        name += f"-{pattern.lower()}-{ttype.lower()}"
+    return name
 
 
 def new_build_id(kind: str, model_slug: str, recipe: str, now: datetime | None = None) -> str:
@@ -298,12 +305,15 @@ def imatrix(input_path: Path, calibration: list[Path], results: Path, *, engine_
 
 
 def quantize(input_path: Path, qtype: str, results: Path, *, engine_dir: Path, embedding_type: str | None = None,
-             imatrix_path: Path | None = None, threads: int = 16) -> dict:
-    """Quantize a file from `model convert` with llama-quantize from the official build of the same engine version."""
+             imatrix_path: Path | None = None, tensor_types: list[str] | None = None, threads: int = 16) -> dict:
+    """Quantize a file from `model convert` with llama-quantize from the official build of the same engine version.
+
+    tensor_types: llama-quantize --tensor-type overrides, e.g. ["ffn_down=q4_0"].
+    """
     from .quality.server import ServerError, describe_host_engine
 
     started = datetime.now(timezone.utc)
-    recipe = recipe_name(qtype, embedding_type, imatrix=imatrix_path is not None)
+    recipe = recipe_name(qtype, embedding_type, imatrix=imatrix_path is not None, tensor_types=tensor_types)
     records = load(results)
     input_sha = sha256_file(input_path)
     parent = find_by_sha(records, input_sha)
@@ -336,6 +346,8 @@ def quantize(input_path: Path, qtype: str, results: Path, *, engine_dir: Path, e
             overrides = ["--output-tensor-type", embedding_type, "--token-embedding-type", embedding_type]
         if imatrix_path is not None:
             overrides += ["--imatrix", str(imatrix_path)]
+        for spec in tensor_types or []:
+            overrides += ["--tensor-type", spec]
         args = [*overrides, str(input_path), str(out), qtype.upper(), str(threads)]
         record["args"] = args
         raw.mkdir(parents=True, exist_ok=True)

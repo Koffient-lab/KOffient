@@ -31,6 +31,7 @@ def test_recipe_name_marks_the_vocabulary_override():
     assert builds.recipe_name("Q4_K_M") == "q4_k_m"
     assert builds.recipe_name("q4_k_m", "Q5_0") == "q4_k_m-emb-q5_0"
     assert builds.recipe_name("IQ4_XS", imatrix=True) == "iq4_xs-imat"
+    assert builds.recipe_name("q4_0", imatrix=True, tensor_types=["ffn_down=Q4_0"]) == "q4_0-imat-ffn_down-q4_0"
     builds.validate(make_build(kind="imatrix", recipe="imatrix", output={"file": "m-imatrix.gguf", "sha256": "e" * 64}))
 
 
