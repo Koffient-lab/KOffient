@@ -15,7 +15,7 @@ from .bench import REMOTE_ROOT, BenchParams, ProbeError, measure
 from .builds import attach
 from .device import Device, DeviceError
 from .engine import BINARIES, EngineError, describe_build
-from .model import describe_model, sha256_file
+from .model import describe_model, sha256_file, variant_name
 
 
 def _work_dir(args) -> Path | None:
@@ -56,6 +56,8 @@ def cmd_run(args) -> int:
         cold_repetitions=0 if args.skip_cold else args.cold_repetitions,
         n_ctx=args.n_ctx,
         timeout_s=args.timeout,
+        flash_attn=args.flash_attn,
+        ubatch=args.ubatch,
     )
 
     try:
@@ -70,7 +72,7 @@ def cmd_run(args) -> int:
     print(f"model passport: {model_path.name}", flush=True)
     model = attach(describe_model(model_path, source=args.source), results_dir)
     started = datetime.now(timezone.utc)
-    run_id = rec.new_run_id(model, engine, started)
+    run_id = rec.new_run_id(model, engine, started) + (f"-{rec.slug(args.label)}" if args.label else "")
     raw_dir = results_dir / "raw" / run_id
     raw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -79,6 +81,7 @@ def cmd_run(args) -> int:
         "run_id": run_id,
         "started_at": started.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "layer": "engine",
+        "label": args.label,
         "status": "failed",
         "error": None,
         "tooling_commit": rec.tooling_commit(),
@@ -140,7 +143,7 @@ def _row(r: dict) -> list[str]:
 
     return [
         r["started_at"][:16].replace("T", " "),
-        f"{model['name']} {model.get('quant_label') or ''}".strip(),
+        f"{model['name']} {variant_name(model)} {r.get('label') or ''}".strip(),
         _fmt(model["file_bytes"] / 1e6, 0),
         _fmt(model.get("bits_per_param"), 2),
         r["engine"]["build_id"],
@@ -317,6 +320,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--skip-cold", action="store_true", help="skip cold-start runs (they need root)")
     run.add_argument("--n-ctx", type=int, default=2048, help="context size for the load/TTFT/memory runs")
     run.add_argument("--timeout", type=int, default=3600, help="seconds per measurement step")
+    run.add_argument("--flash-attn", choices=["on", "off", "auto"], help="flash attention (default: llama.cpp's auto)")
+    run.add_argument("--ubatch", type=int, help="micro-batch size (default: llama.cpp's 512)")
+    run.add_argument("--label", help="tag for a non-default setup, e.g. fa-off")
     run.set_defaults(func=cmd_run)
 
     show = bench.add_parser("show", help="print recorded runs as a table")

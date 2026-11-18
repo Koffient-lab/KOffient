@@ -30,6 +30,17 @@ class BenchParams:
     cold_repetitions: int = 3
     n_ctx: int = 2048
     timeout_s: int = 3600
+    flash_attn: str | None = None  # on | off | auto; None leaves llama.cpp's default (auto)
+    ubatch: int | None = None  # micro-batch size; None leaves llama.cpp's default (512)
+
+    def engine_flags(self) -> str:
+        """Flags understood the same way by llama-bench and llama-completion."""
+        flags = []
+        if self.flash_attn:
+            flags += ["-fa", self.flash_attn]
+        if self.ubatch:
+            flags += ["-ub", str(self.ubatch)]
+        return " ".join(flags)
 
     def as_record(self) -> dict:
         return {
@@ -40,6 +51,8 @@ class BenchParams:
             "cold_repetitions": self.cold_repetitions,
             "n_ctx": self.n_ctx,
             "warmup": True,
+            "flash_attn": self.flash_attn,
+            "ubatch": self.ubatch,
         }
 
 
@@ -141,8 +154,8 @@ def run_llama_bench(device: Device, bin_dir: str, model: str, params: BenchParam
     prompts = ",".join(str(n) for n in params.n_prompt)
     command = (
         f"{bin_dir}/llama-bench -m {shlex.quote(model)} -t {params.threads} "
-        f"-p {prompts} -n {params.n_gen} -r {params.repetitions} -o json"
-    )
+        f"-p {prompts} -n {params.n_gen} -r {params.repetitions} -o json {params.engine_flags()}"
+    ).rstrip()
     out, err = _run_step(device, "llama-bench", command, raw_dir, params.timeout_s)
     result = parse_llama_bench(out)
     result["peak_rss_kib"] = parse_time_v(err)["max_rss_kib"]
@@ -155,8 +168,8 @@ def run_completion(
     """One process start to first token: load the model, evaluate the prompt, sample one token."""
     command = (
         f"{bin_dir}/llama-completion -m {shlex.quote(model)} -t {params.threads} -c {params.n_ctx} "
-        f"-n 1 --temp 0 -s 1 -no-cnv --no-display-prompt -f {shlex.quote(prompt)}"
-    )
+        f"-n 1 --temp 0 -s 1 -no-cnv --no-display-prompt -f {shlex.quote(prompt)} {params.engine_flags()}"
+    ).rstrip()
     _out, err = _run_step(device, name, command, raw_dir, params.timeout_s)
     result = parse_completion(err)
     result["ttft_ms"] = result["prompt_eval_ms"] + result["sampling_ms"]
