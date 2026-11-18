@@ -32,6 +32,7 @@ class BenchParams:
     timeout_s: int = 3600
     flash_attn: str | None = None  # on | off | auto; None leaves llama.cpp's default (auto)
     ubatch: int | None = None  # micro-batch size; None leaves llama.cpp's default (512)
+    load_mode: str | None = None  # llama-completion --load-mode (none = no mmap); None leaves the default (auto)
 
     def engine_flags(self) -> str:
         """Flags understood the same way by llama-bench and llama-completion."""
@@ -40,6 +41,8 @@ class BenchParams:
             flags += ["-fa", self.flash_attn]
         if self.ubatch:
             flags += ["-ub", str(self.ubatch)]
+        if self.load_mode:
+            flags += ["-lm", self.load_mode]
         return " ".join(flags)
 
     def as_record(self) -> dict:
@@ -53,6 +56,7 @@ class BenchParams:
             "warmup": True,
             "flash_attn": self.flash_attn,
             "ubatch": self.ubatch,
+            "load_mode": self.load_mode,
         }
 
 

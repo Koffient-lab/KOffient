@@ -58,6 +58,7 @@ def cmd_run(args) -> int:
         timeout_s=args.timeout,
         flash_attn=args.flash_attn,
         ubatch=args.ubatch,
+        load_mode=args.load_mode,
     )
 
     try:
@@ -199,6 +200,8 @@ def _report_build(record: dict) -> int:
     out = record["output"]
     if record["kind"] == "fetch":
         print(f"fetched {len(out['files'])} files to {out['dir']}")
+    elif record["kind"] == "imatrix":
+        print(f"importance matrix: {out['file']}, sha256 {out['sha256'][:12]}")
     else:
         p = out["passport"]
         print(f"{record['recipe']}: {out['file']}\n  {out['file_bytes'] / 1e6:.1f} MB, {p['bits_per_param']} bits/param, "
@@ -235,8 +238,20 @@ def cmd_model_quantize(args) -> int:
     code = 0
     for qtype in args.type.split(","):
         code |= _report_build(builds.quantize(path, qtype, _results_dir(args), engine_dir=engine_dir,
-                                              embedding_type=args.embedding_type, threads=args.threads))
+                                              embedding_type=args.embedding_type, threads=args.threads,
+                                              imatrix_path=Path(args.imatrix) if args.imatrix else None))
     return code
+
+
+def cmd_model_imatrix(args) -> int:
+    from . import builds
+    from .quality.cli import DEFAULT_ENGINE
+
+    work = _need_work(args)
+    engine_dir = Path(args.engine_dir) if args.engine_dir else work / "host" / DEFAULT_ENGINE
+    return _report_build(builds.imatrix(Path(args.input), [Path(p) for p in args.calibration], _results_dir(args),
+                                        engine_dir=engine_dir, chunks=args.chunks, gpu_layers=args.gpu_layers,
+                                        threads=args.threads))
 
 
 def cmd_model_show(args) -> int:
@@ -252,6 +267,9 @@ def cmd_model_show(args) -> int:
         if r["kind"] == "fetch":
             size = sum(f["bytes"] for f in out.get("files", {}).values()) / 1e6 if out else None
             rows.append([r["build_id"], r["source"], _fmt(size, 0), "-", "-", "-", r["status"]])
+            continue
+        if r["kind"] == "imatrix" or "passport" not in out:
+            rows.append([r["build_id"], r["recipe"], "-", "-", "-", out.get("sha256", "-")[:12], r["status"]])
             continue
         rows.append([r["build_id"], r["recipe"], _fmt(out["file_bytes"] / 1e6, 1) if out else "-",
                      _fmt(out["passport"]["bits_per_param"], 2) if out else "-",
@@ -290,7 +308,18 @@ def register_model(groups, common) -> None:
     quant.add_argument("--embedding-type", help="type of the vocabulary table, e.g. q5_0 (default: llama.cpp's choice)")
     quant.add_argument("--threads", type=int, default=16)
     quant.add_argument("--engine-dir", help="folder with llama-quantize (default: <work-dir>/host/<engine>)")
+    quant.add_argument("--imatrix", help="importance matrix made by `model imatrix` for the same input file")
     quant.set_defaults(func=cmd_model_quantize)
+
+    imat = model.add_parser("imatrix", help="importance matrix of a converted model over calibration text")
+    common(imat)
+    imat.add_argument("--input", required=True, help="GGUF made by `model convert`")
+    imat.add_argument("--calibration", required=True, nargs="+", help="text files; they must not overlap evaluation")
+    imat.add_argument("--chunks", type=int, default=200, help="chunks of 512 tokens")
+    imat.add_argument("--gpu-layers", help="e.g. 'all' with a CUDA build in --engine-dir")
+    imat.add_argument("--threads", type=int, default=16)
+    imat.add_argument("--engine-dir", help="folder with llama-imatrix (default: <work-dir>/host/<engine>)")
+    imat.set_defaults(func=cmd_model_imatrix)
 
     show = model.add_parser("show", help="print recorded builds")
     common(show)
@@ -322,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--timeout", type=int, default=3600, help="seconds per measurement step")
     run.add_argument("--flash-attn", choices=["on", "off", "auto"], help="flash attention (default: llama.cpp's auto)")
     run.add_argument("--ubatch", type=int, help="micro-batch size (default: llama.cpp's 512)")
+    run.add_argument("--load-mode", choices=["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"],
+                     help="model loading; 'none' avoids keeping both the mapped file and repacked copies (default: auto)")
     run.add_argument("--label", help="tag for a non-default setup, e.g. fa-off")
     run.set_defaults(func=cmd_run)
 

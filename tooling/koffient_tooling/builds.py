@@ -16,9 +16,10 @@ from .model import describe_model, sha256_file
 
 SCHEMA_VERSION = 1
 BUILDS_FILE = "builds.jsonl"
-KINDS = ("fetch", "convert", "quantize")
+KINDS = ("fetch", "convert", "quantize", "imatrix")
 CONVERTER = "convert_hf_to_gguf.py"
 QUANTIZER = "llama-quantize.exe"
+IMATRIX = "llama-imatrix.exe"
 # Packages that decide what the converter writes; their versions go into the build record.
 CONVERTER_PACKAGES = ("torch", "transformers", "numpy", "sentencepiece", "safetensors", "tokenizers")
 
@@ -39,10 +40,12 @@ class BuildError(RuntimeError):
     pass
 
 
-def recipe_name(qtype: str, embedding_type: str | None = None) -> str:
-    """Short name of a quantization recipe: the llama-quantize type plus overrides, e.g. `q4_k_m-emb-q5_0`."""
+def recipe_name(qtype: str, embedding_type: str | None = None, imatrix: bool = False) -> str:
+    """Short name of a quantization recipe: the llama-quantize type plus overrides, e.g. `q4_k_m-emb-q5_0-imat`."""
     name = qtype.lower()
-    return f"{name}-emb-{embedding_type.lower()}" if embedding_type else name
+    if embedding_type:
+        name += f"-emb-{embedding_type.lower()}"
+    return name + "-imat" if imatrix else name
 
 
 def new_build_id(kind: str, model_slug: str, recipe: str, now: datetime | None = None) -> str:
@@ -59,7 +62,8 @@ def validate(record: dict) -> None:
     if record["kind"] not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
     if record["status"] == "ok":
-        needed = ("dir", "files") if record["kind"] == "fetch" else ("file", "sha256", "passport")
+        needed = {"fetch": ("dir", "files"), "imatrix": ("file", "sha256")}.get(record["kind"],
+                                                                                ("file", "sha256", "passport"))
         missing = [key for key in needed if key not in record["output"]]
         if missing:
             raise ValueError(f"status is ok but the output block is missing {missing}")
@@ -248,13 +252,58 @@ def convert(source_dir: Path, model_name: str, outtype: str, work: Path, results
     return record
 
 
+def imatrix(input_path: Path, calibration: list[Path], results: Path, *, engine_dir: Path, chunks: int = 200,
+            gpu_layers: str | None = None, threads: int = 16) -> dict:
+    """Importance matrix of a converted model over calibration text, for quantize --imatrix."""
+    from .quality.server import ServerError, describe_host_engine
+
+    started = datetime.now(timezone.utc)
+    records = load(results)
+    input_sha = sha256_file(input_path)
+    parent = find_by_sha(records, input_sha)
+    model_slug = input_path.stem.rsplit("-", 1)[0]
+    record = _base_record("imatrix", new_build_id("imatrix", model_slug, f"c{chunks}", started), started,
+                          "imatrix", parent["source"] if parent else None)
+    raw = results / record["raw_dir"]
+    try:
+        if parent is None or parent["kind"] != "convert":
+            raise BuildError(f"{input_path} was not made by `model convert`")
+        raw.mkdir(parents=True, exist_ok=True)
+        text = raw / "calibration.txt"  # the exact text used, kept next to the record
+        text.write_text("\n\n".join(p.read_text(encoding="utf-8") for p in calibration), encoding="utf-8",
+                        newline="\n")
+        record["input"] = {"file": str(input_path), "sha256": input_sha, "build_id": parent["build_id"],
+                           "calibration": [{"file": str(p), "sha256": sha256_file(p)} for p in calibration],
+                           "calibration_sha256": sha256_file(text)}
+        tool = describe_host_engine(engine_dir)
+        tool["binaries_sha256"][IMATRIX] = sha256_file(engine_dir / IMATRIX)
+        record["tool"] = tool
+        out = input_path.with_name(f"{model_slug}-imatrix-c{chunks}.gguf")
+        if out.exists():
+            raise BuildError(f"{out} already exists; remove it first")
+        args = ["-m", str(input_path), "-f", str(text), "-o", str(out), "--chunks", str(chunks), "-c", "512",
+                "-t", str(threads)] + (["-ngl", gpu_layers] if gpu_layers else [])
+        record["args"] = args
+        with open(raw / "llama-imatrix.log", "w", encoding="utf-8") as log:
+            proc = subprocess.run([str(engine_dir / IMATRIX), *args], stdout=log, stderr=subprocess.STDOUT,
+                                  timeout=7200)
+        if proc.returncode != 0 or not out.is_file():
+            raise BuildError(f"llama-imatrix exited with {proc.returncode}, see {raw / 'llama-imatrix.log'}")
+        record["output"] = {"file": str(out), "sha256": sha256_file(out), "file_bytes": out.stat().st_size}
+        record["status"] = "ok"
+    except (BuildError, ServerError, OSError, subprocess.TimeoutExpired) as exc:
+        record["error"] = f"{type(exc).__name__}: {exc}"
+    append(record, results)
+    return record
+
+
 def quantize(input_path: Path, qtype: str, results: Path, *, engine_dir: Path, embedding_type: str | None = None,
-             threads: int = 16) -> dict:
+             imatrix_path: Path | None = None, threads: int = 16) -> dict:
     """Quantize a file from `model convert` with llama-quantize from the official build of the same engine version."""
     from .quality.server import ServerError, describe_host_engine
 
     started = datetime.now(timezone.utc)
-    recipe = recipe_name(qtype, embedding_type)
+    recipe = recipe_name(qtype, embedding_type, imatrix=imatrix_path is not None)
     records = load(results)
     input_sha = sha256_file(input_path)
     parent = find_by_sha(records, input_sha)
@@ -266,6 +315,12 @@ def quantize(input_path: Path, qtype: str, results: Path, *, engine_dir: Path, e
         if parent is None or parent["kind"] != "convert":
             raise BuildError(f"{input_path} was not made by `model convert`: quantize only our own converted files")
         record["input"] = {"file": str(input_path), "sha256": input_sha, "build_id": parent["build_id"]}
+        if imatrix_path is not None:
+            imat = find_by_sha(records, sha256_file(imatrix_path))
+            if imat is None or imat["kind"] != "imatrix" or imat["input"]["sha256"] != input_sha:
+                raise BuildError(f"{imatrix_path} was not made by `model imatrix` for this input file")
+            record["input"]["imatrix"] = {"file": str(imatrix_path), "sha256": imat["output"]["sha256"],
+                                          "build_id": imat["build_id"]}
         quantizer = engine_dir / QUANTIZER
         if not quantizer.is_file():
             raise BuildError(f"{QUANTIZER} not found in {engine_dir}")
@@ -279,6 +334,8 @@ def quantize(input_path: Path, qtype: str, results: Path, *, engine_dir: Path, e
         if embedding_type:
             # With a shared vocabulary table llama.cpp gives token_embd the output type; set both to be explicit.
             overrides = ["--output-tensor-type", embedding_type, "--token-embedding-type", embedding_type]
+        if imatrix_path is not None:
+            overrides += ["--imatrix", str(imatrix_path)]
         args = [*overrides, str(input_path), str(out), qtype.upper(), str(threads)]
         record["args"] = args
         raw.mkdir(parents=True, exist_ok=True)
