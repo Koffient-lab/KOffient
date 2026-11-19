@@ -246,6 +246,20 @@ def cmd_model_quantize(args) -> int:
     return code
 
 
+def cmd_model_package(args) -> int:
+    from . import builds
+    from .package import package
+
+    work = _need_work(args)
+    out_root = Path(args.out_dir) if args.out_dir else work / "release"
+    try:
+        out = package(Path(args.model), args.role, out_root, _results_dir(args), notes=args.note)
+    except builds.BuildError as exc:
+        raise SystemExit(f"error: {exc}")
+    print(f"package: {out}")
+    return 0
+
+
 def cmd_model_tie_output(args) -> int:
     from . import builds
 
@@ -321,6 +335,14 @@ def register_model(groups, common) -> None:
     quant.add_argument("--tensor-type", action="append",
                        help="llama-quantize override PATTERN=TYPE, repeatable, e.g. ffn_down=q4_0")
     quant.set_defaults(func=cmd_model_quantize)
+
+    pkg = model.add_parser("package", help="release package: GGUF, source licence and manifest.json")
+    common(pkg)
+    pkg.add_argument("--model", required=True, help="a GGUF we built")
+    pkg.add_argument("--role", required=True, choices=["primary", "fallback"])
+    pkg.add_argument("--note", action="append", help="model-specific note for the SDK side, repeatable")
+    pkg.add_argument("--out-dir", help="default: <work-dir>/release")
+    pkg.set_defaults(func=cmd_model_package)
 
     tie = model.add_parser("tie-output", help="drop output.weight when it duplicates token_embd.weight")
     common(tie)

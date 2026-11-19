@@ -22,7 +22,7 @@ koffient = "koffient_tooling.cli:main"
 include = ["koffient_tooling*"]
 
 [tool.setuptools.package-data]
-koffient_tooling = ["prompts/*.txt"]
+koffient_tooling = ["prompts/*.txt", "licenses/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
