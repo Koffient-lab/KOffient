@@ -96,14 +96,16 @@ def cmd_run(args) -> int:
 
     bin_dir = f"{REMOTE_ROOT}/bin/{engine['build_id']}"
     remote_model = f"{REMOTE_ROOT}/models/{model['sha256'][:12]}-{model_path.name}"
-    remote_prompt = f"{REMOTE_ROOT}/prompts/ttft_en.txt"
+    prompt_name = args.prompt_file or "ttft_en.txt"
+    remote_prompt = f"{REMOTE_ROOT}/prompts/{prompt_name}"
+    record["params"]["ttft_prompt_file"] = prompt_name
     try:
         print(f"device: {device.serial} ({device_facts['kind']}, {device_facts['abi']}); pushing files", flush=True)
         for name in BINARIES:
             device.push_if_changed(build_dir / "bin" / name, f"{bin_dir}/{name}",
                                    engine["binaries_sha256"][name], executable=True)
         device.push_if_changed(model_path, remote_model, model["sha256"])
-        with resources.as_file(resources.files("koffient_tooling") / "prompts" / "ttft_en.txt") as prompt_file:
+        with resources.as_file(resources.files("koffient_tooling") / "prompts" / prompt_name) as prompt_file:
             device.push_if_changed(prompt_file, remote_prompt, sha256_file(prompt_file))
 
         print(f"measuring: run {run_id}", flush=True)
@@ -357,6 +359,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--load-mode", choices=["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"],
                      help="model loading; 'none' avoids keeping both the mapped file and repacked copies (default: auto)")
     run.add_argument("--label", help="tag for a non-default setup, e.g. fa-off")
+    run.add_argument("--prompt-file", choices=["ttft_en.txt", "ttft_tools_en.txt"],
+                     help="prompt for the time-to-first-token runs: a short text (default) or a request with "
+                          "tool definitions, as an app with function calling would send")
     run.set_defaults(func=cmd_run)
 
     show = bench.add_parser("show", help="print recorded runs as a table")
