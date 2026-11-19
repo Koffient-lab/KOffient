@@ -141,6 +141,10 @@ def test_perplexity_output_parsing():
     assert kld["delta_p_mean_pct"] == -0.804 and kld["same_top_pct"] == 88.598
     with pytest.raises(closeness.ClosenessError):
         closeness.parse_kld("error: failed to load model")
+    # an identical model: rounding gives a tiny negative mean KLD
+    same = (FIXTURES / "perplexity_kld.txt").read_text(encoding="utf-8").replace(
+        "Mean    KLD:   0.043584", "Mean    KLD:  -0.000014")
+    assert closeness.parse_kld(same)["kld_mean"] == -0.000014
 
 
 def test_side_group_is_reported_but_left_out_of_the_headline():
