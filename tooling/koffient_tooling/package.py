@@ -81,7 +81,7 @@ def _speed(results: Path, sha: str) -> list[dict]:
         out.append({
             "run_id": r["run_id"], "label": r.get("label"), "device": r["device"].get("kind"),
             "speed_is_phone_grade": r["device"].get("speed_is_phone_grade"), "build": r["engine"]["build_id"],
-            "load_mode": r["params"].get("load_mode"),
+            "load_mode": r["params"].get("load_mode"), "n_ctx": r["params"].get("n_ctx"),
             "prefill_tps": {str(p["n_prompt"]): p["tps"]["median"] for p in m.get("prefill") or []},
             "decode_tps": (m.get("decode") or [{}])[0].get("tps", {}).get("median"),
             "ttft_ms_warm": (m.get("ttft_ms") or {}).get("warm", {}).get("median"),
@@ -122,7 +122,10 @@ def package(model_path: Path, role: str, out_root: Path, results: Path, *, notes
             shutil.copy2(text, out / "LICENSE")
         licence_file = "LICENSE (standard Apache-2.0 text; the source repository states the licence in its card)"
     speed = _speed(results, sha)
-    peak = [s["peak_rss_mb"] for s in speed if s["load_mode"] == "none" and s["peak_rss_mb"]]
+    measured = [s for s in speed if s["load_mode"] == "none" and s["peak_rss_mb"]]
+    peak = [s["peak_rss_mb"] for s in measured]
+    # The KV cache grows with n_ctx, so the peak holds only for the context it was measured at.
+    peak_ctx = max((s["n_ctx"] for s in measured if s["n_ctx"]), default=None)
     manifest = {
         "manifest_version": MANIFEST_VERSION,
         "id": package_id,
@@ -137,7 +140,8 @@ def package(model_path: Path, role: str, out_root: Path, results: Path, *, notes
                  "recipe": build["recipe"], "bits_per_param": passport.get("bits_per_param"),
                  "build_id": build["build_id"]},
         "runtime": {**COMMON_RUNTIME,
-                    "min_ram_mb_measured": max(peak) if peak else None},
+                    "min_ram_mb_measured": max(peak) if peak else None,
+                    "min_ram_mb_measured_at_n_ctx": peak_ctx},
         "measured": {"quality": _quality(results, sha), "speed": speed},
         "notes": notes or [],
     }
