@@ -34,6 +34,24 @@ python -m koffient_tooling model show --work-dir <рабочая папка>
   `--embedding-type` задаёт тип таблицы словаря; без него llama.cpp ставит Q8_0, если ширина модели не кратна 256.
   Имя рецепта: тип и переопределения, например `q4_k_m-emb-q5_0`.
 
+Дополнительные шаги сборки:
+
+```
+python -m koffient_tooling model imatrix --work-dir <рабочая папка> --input <f16.gguf> --calibration <текст> [<текст> ...] --chunks 400
+python -m koffient_tooling model quantize ... --imatrix <файл из model imatrix> [--tensor-type ffn_down=q4_0]
+python -m koffient_tooling model tie-output --work-dir <рабочая папка> --input <f16.gguf>
+python -m koffient_tooling model package --work-dir <рабочая папка> --model <gguf> --role primary|fallback [--note ...]
+```
+
+- `imatrix` — матрица важности весов по калибровочному тексту; текст не должен пересекаться с данными оценки.
+  Точный текст сохраняется рядом с записью сборки. Рецепт файла получает пометку `-imat`.
+- `--tensor-type` — тип для отдельных тензоров, попадает в имя рецепта. Нужен Granite: с калибровкой
+  `llama-quantize` ставит ранним `ffn_down` тип Q4_1, и модель ломается.
+- `tie-output` — убирает `output.weight`, если он побайтно равен `token_embd.weight` (бывает, когда в исходнике
+  лежит отдельный `lm_head` при связанной таблице словаря). Рецепт квантования из такого файла получает `-tied`.
+- `package` — папка выпуска `<рабочая папка>/release/<id>/`: GGUF (жёсткой ссылкой), текст лицензии и
+  `manifest.json` (происхождение файла, рекомендуемые параметры запуска, измеренные качество, скорость и память).
+
 Каждый шаг пишет строку в `results/builds.jsonl`: откуда вход, чем собрано (коммит конвертера и версии пакетов
 или версия и контрольная сумма `llama-quantize`), с какими аргументами, контрольная сумма и содержимое результата.
 Вывод инструментов — в `results/raw/builds/<build_id>/`. Записи замеров находят свою сборку по sha256 файла
@@ -55,6 +73,10 @@ py -3.11 -m venv <рабочая папка>/venv-convert
 python -m koffient_tooling bench run --work-dir <рабочая папка> --model <файл.gguf> --build <имя сборки>
 python -m koffient_tooling bench show --work-dir <рабочая папка>
 ```
+
+Необязательные флаги движка, они же записываются в прогон: `--flash-attn on|off|auto`, `--ubatch N`,
+`--load-mode none` (без отображения файла в память — экономит до трети памяти), `--label <метка>`,
+`--prompt-file ttft_tools_en.txt` (время до первого токена на запросе с шестью функциями, 1252 токена).
 
 `--build` — папка сборки llama.cpp (или её имя внутри `<рабочая папка>/build`) с целями
 `llama-bench` и `llama-completion`. Раннер сам заливает бинарники и модель на устройство
