@@ -246,6 +246,12 @@ def cmd_model_quantize(args) -> int:
     return code
 
 
+def cmd_model_tie_output(args) -> int:
+    from . import builds
+
+    return _report_build(builds.tie_output(Path(args.input), _results_dir(args)))
+
+
 def cmd_model_imatrix(args) -> int:
     from . import builds
     from .quality.cli import DEFAULT_ENGINE
@@ -315,6 +321,11 @@ def register_model(groups, common) -> None:
     quant.add_argument("--tensor-type", action="append",
                        help="llama-quantize override PATTERN=TYPE, repeatable, e.g. ffn_down=q4_0")
     quant.set_defaults(func=cmd_model_quantize)
+
+    tie = model.add_parser("tie-output", help="drop output.weight when it duplicates token_embd.weight")
+    common(tie)
+    tie.add_argument("--input", required=True, help="GGUF made by `model convert`")
+    tie.set_defaults(func=cmd_model_tie_output)
 
     imat = model.add_parser("imatrix", help="importance matrix of a converted model over calibration text")
     common(imat)

@@ -16,7 +16,7 @@ from .model import describe_model, sha256_file
 
 SCHEMA_VERSION = 1
 BUILDS_FILE = "builds.jsonl"
-KINDS = ("fetch", "convert", "quantize", "imatrix")
+KINDS = ("fetch", "convert", "quantize", "imatrix", "transform")
 CONVERTER = "convert_hf_to_gguf.py"
 QUANTIZER = "llama-quantize.exe"
 IMATRIX = "llama-imatrix.exe"
@@ -259,6 +259,61 @@ def convert(source_dir: Path, model_name: str, outtype: str, work: Path, results
     return record
 
 
+def tie_output(input_path: Path, results: Path) -> dict:
+    """Write a copy of a converted GGUF without `output.weight` when it is a byte-identical copy of `token_embd`.
+
+    Some checkpoints store lm_head separately although the embeddings are tied (Qwen3-0.6B); the converter keeps it,
+    so the vocabulary table is in the file twice. Without the output tensor llama.cpp uses token_embd for both.
+    """
+    import gguf
+
+    started = datetime.now(timezone.utc)
+    records = load(results)
+    input_sha = sha256_file(input_path)
+    parent = find_by_sha(records, input_sha)
+    model_slug, _, outtype = input_path.stem.rpartition("-")
+    record = _base_record("transform", new_build_id("transform", model_slug, "tied", started), started, "tied",
+                          parent["source"] if parent else None)
+    try:
+        if parent is None or parent["kind"] != "convert":
+            raise BuildError(f"{input_path} was not made by `model convert`")
+        record["input"] = {"file": str(input_path), "sha256": input_sha, "build_id": parent["build_id"]}
+        reader = gguf.GGUFReader(str(input_path))
+        tensors = {t.name: t for t in reader.tensors}
+        out_t, emb_t = tensors.get("output.weight"), tensors.get("token_embd.weight")
+        if out_t is None or emb_t is None:
+            raise BuildError("the file has no separate output.weight: nothing to tie")
+        if out_t.tensor_type != emb_t.tensor_type or bytes(out_t.data.tobytes()) != bytes(emb_t.data.tobytes()):
+            raise BuildError("output.weight differs from token_embd.weight: tying would change the model")
+        out = input_path.with_name(f"{model_slug}-tied-{outtype}.gguf")
+        if out.exists():
+            raise BuildError(f"{out} already exists; remove it first")
+        arch = reader.get_field(gguf.Keys.General.ARCHITECTURE).contents()
+        writer = gguf.GGUFWriter(str(out), arch=arch, endianess=reader.endianess)
+        for field in reader.fields.values():
+            if field.name == gguf.Keys.General.ARCHITECTURE or field.name.startswith("GGUF."):
+                continue
+            val_type = field.types[0]
+            sub_type = field.types[-1] if val_type == gguf.GGUFValueType.ARRAY else None
+            writer.add_key_value(field.name, field.contents(), val_type, sub_type=sub_type)
+        kept = [t for t in reader.tensors if t.name != "output.weight"]
+        for t in kept:
+            writer.add_tensor_info(t.name, t.data.shape, t.data.dtype, t.data.nbytes, t.tensor_type)
+        writer.write_header_to_file()
+        writer.write_kv_data_to_file()
+        writer.write_ti_data_to_file()
+        for t in kept:
+            writer.write_tensor_data(t.data, tensor_endianess=reader.endianess)
+        writer.close()
+        record["args"] = ["drop output.weight (identical to token_embd.weight)"]
+        record["output"] = _file_passport(out)
+        record["status"] = "ok"
+    except (BuildError, OSError) as exc:
+        record["error"] = f"{type(exc).__name__}: {exc}"
+    append(record, results)
+    return record
+
+
 def imatrix(input_path: Path, calibration: list[Path], results: Path, *, engine_dir: Path, chunks: int = 200,
             gpu_layers: str | None = None, threads: int = 16) -> dict:
     """Importance matrix of a converted model over calibration text, for quantize --imatrix."""
@@ -317,12 +372,14 @@ def quantize(input_path: Path, qtype: str, results: Path, *, engine_dir: Path, e
     records = load(results)
     input_sha = sha256_file(input_path)
     parent = find_by_sha(records, input_sha)
+    if parent is not None and parent["kind"] == "transform":
+        recipe += f"-{parent['recipe']}"  # e.g. q4_k_m-tied: the transform is part of how the file was made
     model_slug = input_path.stem.rsplit("-", 1)[0]
     record = _base_record("quantize", new_build_id("quantize", model_slug, recipe, started), started, recipe,
                           parent["source"] if parent else None)
     raw = results / record["raw_dir"]
     try:
-        if parent is None or parent["kind"] != "convert":
+        if parent is None or parent["kind"] not in ("convert", "transform"):
             raise BuildError(f"{input_path} was not made by `model convert`: quantize only our own converted files")
         record["input"] = {"file": str(input_path), "sha256": input_sha, "build_id": parent["build_id"]}
         if imatrix_path is not None:
