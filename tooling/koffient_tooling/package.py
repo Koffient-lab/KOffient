@@ -72,10 +72,20 @@ def _quality(results: Path, sha: str) -> dict:
     return out
 
 
+def _invalid_runs(results: Path) -> set[str]:
+    """run_ids marked invalid in invalid.jsonl (the same file marks bad quality records by eval_id)."""
+    path = results / "invalid.jsonl"
+    if not path.is_file():
+        return set()
+    with open(path, encoding="utf-8") as handle:
+        return {entry["run_id"] for entry in map(json.loads, filter(str.strip, handle)) if "run_id" in entry}
+
+
 def _speed(results: Path, sha: str) -> list[dict]:
     out = []
+    invalid = _invalid_runs(results)
     for r in runs.load(results):
-        if r["status"] != "ok" or r["model"].get("sha256") != sha:
+        if r["status"] != "ok" or r["model"].get("sha256") != sha or r["run_id"] in invalid:
             continue
         m = r["metrics"]
         out.append({

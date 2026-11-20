@@ -39,7 +39,10 @@ def test_package_writes_manifest_and_licence(tmp_path):
     run = {"run_id": "r", "status": "ok", "label": None, "model": {"sha256": sha}, "device": {"kind": "emulator"},
            "engine": {"build_id": "x86"}, "params": {"load_mode": "none", "n_ctx": 2048},
            "metrics": {"peak_rss_mb": 1258.0}}
-    (results / "runs.jsonl").write_text(json.dumps(run) + "\n", encoding="utf-8")
+    bad = {**run, "run_id": "bad", "metrics": {"peak_rss_mb": 9999.0}}
+    (results / "runs.jsonl").write_text(json.dumps(run) + "\n" + json.dumps(bad) + "\n", encoding="utf-8")
+    (results / "invalid.jsonl").write_text(json.dumps({"run_id": "bad", "reason": "overlapped"}) + "\n",
+                                           encoding="utf-8")
     out = package.package(model_file, "primary", tmp_path / "release", results, notes=["note"])
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["file"]["sha256"] == sha and manifest["role"] == "primary" and manifest["notes"] == ["note"]
