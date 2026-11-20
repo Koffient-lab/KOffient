@@ -400,3 +400,9 @@ def test_bench_engine_flags_carry_kv_cache_type():
     assert BenchParams(load_mode="none").engine_flags() == "-lm none"
     assert BenchParams(load_mode="none", kv_type="q8_0").engine_flags() == "-lm none -ctk q8_0 -ctv q8_0"
     assert BenchParams(kv_type="q8_0").as_record()["kv_type"] == "q8_0"
+
+
+def test_invalid_ids_skip_speed_run_lines(tmp_path):
+    lines = [{"eval_id": "e1", "reason": "bad"}, {"run_id": "r1", "reason": "overlapped"}]
+    (tmp_path / rec.INVALID_FILE).write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
+    assert rec.invalid_ids(tmp_path) == {"e1": "bad"}

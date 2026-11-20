@@ -61,7 +61,9 @@ def append(record: dict, results_dir: Path) -> Path:
     return path
 
 
-INVALID_FILE = "invalid.jsonl"  # {"eval_id": ..., "reason": ...} per line: records found wrong after they were written
+# {"eval_id": ..., "reason": ...} per line: quality records found wrong after they were written. The same file marks
+# speed runs by "run_id" (read by the package builder); those lines are skipped here.
+INVALID_FILE = "invalid.jsonl"
 
 
 def invalid_ids(results_dir: Path) -> dict[str, str]:
@@ -70,7 +72,7 @@ def invalid_ids(results_dir: Path) -> dict[str, str]:
         return {}
     with open(path, encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle if line.strip()]
-    return {row["eval_id"]: row["reason"] for row in rows}
+    return {row["eval_id"]: row["reason"] for row in rows if "eval_id" in row}
 
 
 def load(results_dir: Path) -> list[dict]:
