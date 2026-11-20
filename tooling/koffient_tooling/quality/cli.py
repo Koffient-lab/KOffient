@@ -82,17 +82,21 @@ def cmd_run(args) -> int:
         engine = describe_host_engine(engine_dir)
     except ServerError as exc:
         raise SystemExit(f"error: {exc}")
+    if args.kv_cache_type and not args.label:
+        # Results are keyed by file and label: without a label these answers would replace the default ones.
+        raise SystemExit("error: --kv-cache-type changes the setup; give it a --label, e.g. cuda-kv-q8_0")
     model_path, model = _model(args)
     params = {**SAMPLING, "ctx": args.ctx, "servers": args.servers,
               "threads_per_server": args.threads, "limit": args.limit, "gpu_layers": args.gpu_layers,
-              "chat_template_kwargs": CHAT_TEMPLATE_KWARGS}
+              "kv_cache_type": args.kv_cache_type, "chat_template_kwargs": CHAT_TEMPLATE_KWARGS}
 
     session = datetime.now(timezone.utc)
     log_dir = results / "raw" / "quality" / _eval_id(session, model, "servers")
     failed = 0
     try:
         server = ServerPool(engine_dir, model_path, log_dir, servers=args.servers, ctx=args.ctx,
-                            threads=args.threads, gpu_layers=args.gpu_layers).__enter__()
+                            threads=args.threads, gpu_layers=args.gpu_layers,
+                            kv_type=args.kv_cache_type).__enter__()
         params["server_command"] = server.command_line()
     except ServerError as exc:
         raise SystemExit(f"error: {exc}")
@@ -339,6 +343,8 @@ def register(groups, common) -> None:
     run.add_argument("--threads", type=int, default=2, help="threads per server")
     run.add_argument("--ctx", type=int, default=4096, help="context size")
     run.add_argument("--gpu-layers", help="layers to put on the GPU, e.g. 'all' (with a CUDA build in --engine-dir)")
+    run.add_argument("--kv-cache-type", choices=["f16", "q8_0", "q4_0"],
+                     help="KV cache data type for K and V (default: llama.cpp's f16); needs --label")
     run.set_defaults(func=cmd_run)
 
     close = quality.add_parser("closeness", help="perplexity and KL divergence against the fp16 base")

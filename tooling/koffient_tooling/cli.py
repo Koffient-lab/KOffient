@@ -59,6 +59,7 @@ def cmd_run(args) -> int:
         flash_attn=args.flash_attn,
         ubatch=args.ubatch,
         load_mode=args.load_mode,
+        kv_type=args.kv_cache_type,
     )
 
     try:
@@ -391,6 +392,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--ubatch", type=int, help="micro-batch size (default: llama.cpp's 512)")
     run.add_argument("--load-mode", choices=["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"],
                      help="model loading; 'none' avoids keeping both the mapped file and repacked copies (default: auto)")
+    run.add_argument("--kv-cache-type", choices=["f16", "q8_0", "q4_0"],
+                     help="KV cache data type for K and V (default: llama.cpp's f16)")
     run.add_argument("--label", help="tag for a non-default setup, e.g. fa-off")
     run.add_argument("--prompt-file", choices=["ttft_en.txt", "ttft_tools_en.txt"],
                      help="prompt for the time-to-first-token runs: a short text (default) or a request with "

@@ -33,6 +33,7 @@ class BenchParams:
     flash_attn: str | None = None  # on | off | auto; None leaves llama.cpp's default (auto)
     ubatch: int | None = None  # micro-batch size; None leaves llama.cpp's default (512)
     load_mode: str | None = None  # llama-completion --load-mode (none = no mmap); None leaves the default (auto)
+    kv_type: str | None = None  # KV cache type for K and V (f16 | q8_0 | q4_0); None leaves the default (f16)
 
     def engine_flags(self) -> str:
         """Flags understood the same way by llama-bench and llama-completion."""
@@ -43,6 +44,8 @@ class BenchParams:
             flags += ["-ub", str(self.ubatch)]
         if self.load_mode:
             flags += ["-lm", self.load_mode]
+        if self.kv_type:
+            flags += ["-ctk", self.kv_type, "-ctv", self.kv_type]
         return " ".join(flags)
 
     def as_record(self) -> dict:
@@ -57,6 +60,7 @@ class BenchParams:
             "flash_attn": self.flash_attn,
             "ubatch": self.ubatch,
             "load_mode": self.load_mode,
+            "kv_type": self.kv_type,
         }
 
 

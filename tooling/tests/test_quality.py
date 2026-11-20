@@ -383,3 +383,20 @@ def test_quality_record_validation():
         rec.validate(make_record(kind="closeness"))
     with pytest.raises(ValueError, match="error"):
         rec.validate(make_record(status="failed", metrics={}))
+
+
+def test_server_kv_cache_type_sets_both_k_and_v():
+    from koffient_tooling.quality import server as srv
+
+    default = srv.LlamaServer(Path("."), Path("m.gguf"), Path("log.txt"))
+    assert "-ctk" not in default.command
+    q8 = srv.LlamaServer(Path("."), Path("m.gguf"), Path("log.txt"), kv_type="q8_0")
+    assert q8.command[-4:] == ["-ctk", "q8_0", "-ctv", "q8_0"]
+
+
+def test_bench_engine_flags_carry_kv_cache_type():
+    from koffient_tooling.bench import BenchParams
+
+    assert BenchParams(load_mode="none").engine_flags() == "-lm none"
+    assert BenchParams(load_mode="none", kv_type="q8_0").engine_flags() == "-lm none -ctk q8_0 -ctv q8_0"
+    assert BenchParams(kv_type="q8_0").as_record()["kv_type"] == "q8_0"

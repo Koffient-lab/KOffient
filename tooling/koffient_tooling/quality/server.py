@@ -77,7 +77,7 @@ class LlamaServer:
     """
 
     def __init__(self, engine_dir: Path, model: Path, log_path: Path, *, ctx: int = 4096, threads: int = 2,
-                 gpu_layers: str | None = None, start_timeout_s: int = 300):
+                 gpu_layers: str | None = None, kv_type: str | None = None, start_timeout_s: int = 300):
         self.command = [
             str(engine_dir / SERVER_BINARY), "-m", str(model), "--host", "127.0.0.1",
             "-c", str(ctx), "-np", "1", "-t", str(threads), "--jinja", "--no-webui",
@@ -89,6 +89,8 @@ class LlamaServer:
         ]
         if gpu_layers is not None:
             self.command += ["-ngl", gpu_layers]
+        if kv_type is not None:  # KV cache data type for both K and V (a quantised V needs flash attention)
+            self.command += ["-ctk", kv_type, "-ctv", kv_type]
         self.log_path = log_path
         self.start_timeout_s = start_timeout_s
         self.url = ""
@@ -186,10 +188,10 @@ class ServerPool:
     MAX_RESTARTS = 3
 
     def __init__(self, engine_dir: Path, model: Path, log_dir: Path, *, servers: int = 8, ctx: int = 4096,
-                 threads: int = 2, gpu_layers: str | None = None):
+                 threads: int = 2, gpu_layers: str | None = None, kv_type: str | None = None):
         self.size = servers
         self._servers = [LlamaServer(engine_dir, model, log_dir / f"server-{i}.log", ctx=ctx, threads=threads,
-                                     gpu_layers=gpu_layers)
+                                     gpu_layers=gpu_layers, kv_type=kv_type)
                          for i in range(servers)]
         self._free: queue.Queue[LlamaServer] = queue.Queue()
         self._lock = threading.Lock()
