@@ -19,22 +19,29 @@ from .model import sha256_file
 
 MANIFEST_VERSION = 1
 
-# Runtime settings every package carries: found by measurement (journal P35, P52, P55, P61).
+# Runtime settings every package carries: found by measurement on the emulator and on a OnePlus 9R
+# (docs/models/METHODOLOGY.md).
 COMMON_RUNTIME = {
     "engine": "llama.cpp",
     "engine_tag": "b12199",
     "load_mode": "none",  # LLAMA_LOAD_MODE_NONE: with mmap the repacked weights and the file pages are both resident
-    "flash_attn": "auto",
+    "flash_attn": "on",  # required by the quantised V cache below
     "n_ctx": 4096,
-    "threads": "2-4 big cores (do not count little cores)",
+    "kv_cache_type": "q8_0",  # K and V; quality unchanged on the fast set, -160/-220 MB at n_ctx 4096
+    "kv_cache_note": "q8_0 slows reading a prompt on a phone CPU by 25-39%; with the prompt cache that hits only the "
+                     "one-off computation of the fixed prefix and long new inputs (tool results, history). Use f16 if "
+                     "tool results are long and memory allows",
+    "threads": "number of big cores (4 on Snapdragon 870); little cores slow generation down (8 threads: -39%)",
     "sampling": {"temperature": 0, "repeat_penalty": 1.0, "presence_penalty": 0.0, "frequency_penalty": 0.0,
                  "dry_multiplier": 0.0},
     "sampling_note": "set every sampling parameter explicitly: the GGUF carries the vendor's generation_config "
                      "defaults, and llama.cpp applies them when a request leaves a parameter unset",
     "arm_build": "GGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16 (no i8mm: phones such as Snapdragon 870 have none)",
     "chat_template": "embedded in the GGUF (tokenizer.chat_template, Jinja)",
-    "prompt_cache": "keep the KV state of a fixed prefix (system prompt, tool definitions) and reuse it: "
-                    "llama_state_seq_save_file / llama_state_seq_load_file",
+    "prompt_cache": "keep the model loaded and the KV state of the fixed prefix (system prompt, tool definitions); "
+                    "save it to a file (llama_state_seq_save_file) and restore it after a restart "
+                    "(llama_state_seq_load_file). On a OnePlus 9R the six-tool request goes from 35 s to ~1 s to the "
+                    "first token; saving takes ~0.1 s, restoring ~0.05 s",
 }
 
 
